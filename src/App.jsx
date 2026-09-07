@@ -12,8 +12,9 @@ import {
   Loader2,
   CheckCircle2,
   XCircle,
+  LogIn,
 } from "lucide-react";
-import { supabase } from "./supabaseClient";
+import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
 const SUBJECTS = [
   "Математик",
@@ -45,8 +46,14 @@ function fmtDate(ts) {
 export default function ClassroomApp() {
   const [role, setRole] = useState(null); // null | 'teacher' | 'student'
   const [showNamePrompt, setShowNamePrompt] = useState(false);
+  const [showTeacherLogin, setShowTeacherLogin] = useState(false);
   const [nameInput, setNameInput] = useState("");
   const [studentName, setStudentName] = useState("");
+  const [teacherUser, setTeacherUser] = useState(null);
+  const [teacherLoginError, setTeacherLoginError] = useState("");
+  const [teacherLoginLoading, setTeacherLoginLoading] = useState(false);
+  const [teacherEmail, setTeacherEmail] = useState("");
+  const [teacherPassword, setTeacherPassword] = useState("");
 
   const [loading, setLoading] = useState(true);
   const [saveError, setSaveError] = useState("");
@@ -82,6 +89,13 @@ export default function ClassroomApp() {
   const loadAll = useCallback(async () => {
     setLoading(true);
     setSaveError("");
+    if (!isSupabaseConfigured || !supabase) {
+      setSaveError(
+        "Supabase тохиргоо дутуу байна. .env.example-ийг .env болгон хуулж, Project URL болон anon key-ээ оруулна уу. Дараа нь dev server-ээ дахин асаана (Ctrl+C, npm run dev)."
+      );
+      setLoading(false);
+      return;
+    }
     try {
       const [lessonsRes, quizzesRes, attemptsRes] = await Promise.all([
         supabase.from("lessons").select("*").order("created_at", { ascending: false }),
@@ -104,6 +118,52 @@ export default function ClassroomApp() {
     loadAll();
   }, [loadAll]);
 
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user?.email) setTeacherUser({ email: session.user.email });
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user?.email) setTeacherUser({ email: session.user.email });
+      else setTeacherUser(null);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  async function handleTeacherClick() {
+    setShowNamePrompt(false);
+    setTeacherLoginError("");
+    if (teacherUser) {
+      setRole("teacher");
+      return;
+    }
+    setShowTeacherLogin(true);
+  }
+
+  async function teacherLogin(e) {
+    e?.preventDefault();
+    if (!supabase || !teacherEmail.trim() || !teacherPassword) return;
+    setTeacherLoginLoading(true);
+    setTeacherLoginError("");
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: teacherEmail.trim(),
+      password: teacherPassword,
+    });
+    setTeacherLoginLoading(false);
+    if (error) {
+      setTeacherLoginError(
+        error.message.includes("Invalid login")
+          ? "Имэйл эсвэл нууц үг буруу байна."
+          : "Нэвтрэхэд алдаа гарлаа. Дахин оролдоно уу."
+      );
+      return;
+    }
+    setTeacherUser({ email: data.user.email });
+    setTeacherPassword("");
+    setShowTeacherLogin(false);
+    setRole("teacher");
+  }
+
   async function addLesson() {
     if (!lessonForm.title.trim() || !lessonForm.content.trim()) return;
     const { data, error } = await supabase
@@ -112,7 +172,9 @@ export default function ClassroomApp() {
       .select()
       .single();
     if (error) {
-      setSaveError("Хичээл хадгалахад алдаа гарлаа.");
+      setSaveError(error.code === "42501" || error.message?.includes("policy")
+        ? "Эрх хүрэлцэхгүй байна. Багшаар нэвтэрсэн эсэхээ шалгана уу."
+        : "Хичээл хадгалахад алдаа гарлаа.");
       return;
     }
     setLessons((prev) => [mapLesson(data), ...prev]);
@@ -216,8 +278,17 @@ export default function ClassroomApp() {
     setStudentTab("quiz-result");
   }
 
-  function exitToRoleSelect() {
+  async function exitToRoleSelect() {
+    if (role === "teacher" && supabase) {
+      await supabase.auth.signOut();
+      setTeacherUser(null);
+    }
     setRole(null);
+    setShowTeacherLogin(false);
+    setShowNamePrompt(false);
+    setTeacherLoginError("");
+    setTeacherEmail("");
+    setTeacherPassword("");
     setTeacherTab("home");
     setStudentTab("home");
     setActiveLesson(null);
@@ -297,21 +368,37 @@ export default function ClassroomApp() {
           <p className="text-sm" style={{ color: "#6B6858" }}>Дэвтэр нээгдэж байна...</p>
         </div>
       ) : role === null ? (
-        <RoleSelect
-          showNamePrompt={showNamePrompt}
-          setShowNamePrompt={setShowNamePrompt}
-          nameInput={nameInput}
-          setNameInput={setNameInput}
-          onTeacher={() => setRole("teacher")}
-          onStudentConfirm={() => {
-            if (!nameInput.trim()) return;
-            setStudentName(nameInput.trim());
-            setRole("student");
-          }}
-        />
+        <>
+          {saveError && (
+            <div className="fixed top-4 left-4 right-4 z-50 max-w-xl mx-auto text-sm px-3 py-2 rounded shadow" style={{ background: "#FBE7E4", color: "#9A3324" }}>
+              {saveError}
+            </div>
+          )}
+          <RoleSelect
+            showNamePrompt={showNamePrompt}
+            setShowNamePrompt={setShowNamePrompt}
+            showTeacherLogin={showTeacherLogin}
+            setShowTeacherLogin={setShowTeacherLogin}
+            nameInput={nameInput}
+            setNameInput={setNameInput}
+            teacherEmail={teacherEmail}
+            setTeacherEmail={setTeacherEmail}
+            teacherPassword={teacherPassword}
+            setTeacherPassword={setTeacherPassword}
+            teacherLoginError={teacherLoginError}
+            teacherLoginLoading={teacherLoginLoading}
+            onTeacher={handleTeacherClick}
+            onTeacherLogin={teacherLogin}
+            onStudentConfirm={() => {
+              if (!nameInput.trim()) return;
+              setStudentName(nameInput.trim());
+              setRole("student");
+            }}
+          />
+        </>
       ) : (
         <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
-          <TopBar role={role} studentName={studentName} onExit={exitToRoleSelect} />
+          <TopBar role={role} studentName={studentName} teacherEmail={teacherUser?.email} onExit={exitToRoleSelect} />
           {saveError && (
             <div className="mb-4 text-sm px-3 py-2 rounded flex items-center justify-between" style={{ background: "#FBE7E4", color: "#9A3324" }}>
               <span>{saveError}</span>
@@ -365,22 +452,49 @@ export default function ClassroomApp() {
   );
 }
 
-function RoleSelect({ showNamePrompt, setShowNamePrompt, nameInput, setNameInput, onTeacher, onStudentConfirm }) {
+function RoleSelect({
+  showNamePrompt,
+  setShowNamePrompt,
+  showTeacherLogin,
+  setShowTeacherLogin,
+  nameInput,
+  setNameInput,
+  teacherEmail,
+  setTeacherEmail,
+  teacherPassword,
+  setTeacherPassword,
+  teacherLoginError,
+  teacherLoginLoading,
+  onTeacher,
+  onTeacherLogin,
+  onStudentConfirm,
+}) {
   return (
     <div className="cn-paper min-h-screen flex flex-col items-center justify-center px-4 py-16">
+      <img
+        src="/img/logo.jpg"
+        alt="Ангийн Дэвтэр"
+        className="w-28 h-28 sm:w-32 sm:h-32 object-contain mb-4"
+      />
       <h1 className="cn-hand text-6xl mb-2" style={{ color: "#24478F" }}>Ангийн Дэвтэр</h1>
       <p className="text-sm mb-10" style={{ color: "#6B6858" }}>Хичээл заах, шалгалт авах онлайн дэвтэр</p>
 
       <div className="grid sm:grid-cols-2 gap-5 w-full max-w-2xl">
-        <button onClick={onTeacher} className="cn-card rounded-xl p-6 text-left transition-transform hover:-translate-y-0.5">
+        <button
+          onClick={onTeacher}
+          className="cn-card rounded-xl p-6 text-left transition-transform hover:-translate-y-0.5"
+        >
           <GraduationCap size={28} color="#24478F" />
           <div className="cn-hand text-3xl mt-3" style={{ color: "#24478F" }}>Багш</div>
           <p className="text-sm mt-1" style={{ color: "#6B6858" }}>
-            Хичээлийн материал нэмэх, шалгалт үүсгэх, сурагчдын үр дүнг харах
+            Имэйл, нууц үгээр нэвтэрч хичээл нэмэх, шалгалт үүсгэх
           </p>
         </button>
 
-        <button onClick={() => setShowNamePrompt(true)} className="cn-card rounded-xl p-6 text-left transition-transform hover:-translate-y-0.5">
+        <button
+          onClick={() => { setShowTeacherLogin(false); setShowNamePrompt(true); }}
+          className="cn-card rounded-xl p-6 text-left transition-transform hover:-translate-y-0.5"
+        >
           <Users size={28} color="#24478F" />
           <div className="cn-hand text-3xl mt-3" style={{ color: "#24478F" }}>Сурагч</div>
           <p className="text-sm mt-1" style={{ color: "#6B6858" }}>
@@ -388,6 +502,55 @@ function RoleSelect({ showNamePrompt, setShowNamePrompt, nameInput, setNameInput
           </p>
         </button>
       </div>
+
+      {showTeacherLogin && (
+        <form onSubmit={onTeacherLogin} className="cn-card rounded-xl p-5 mt-6 w-full max-w-sm">
+          <div className="flex items-center gap-2 mb-4">
+            <LogIn size={18} color="#24478F" />
+            <span className="font-semibold text-sm" style={{ color: "#24478F" }}>Багшийн нэвтрэлт</span>
+          </div>
+          {teacherLoginError && (
+            <p className="text-xs mb-3 px-2 py-1.5 rounded" style={{ background: "#FBE7E4", color: "#9A3324" }}>
+              {teacherLoginError}
+            </p>
+          )}
+          <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Имэйл</label>
+          <input
+            autoFocus
+            type="email"
+            required
+            className="cn-input w-full px-3 py-2 text-sm mb-3"
+            placeholder="bagsh@school.mn"
+            value={teacherEmail}
+            onChange={(e) => setTeacherEmail(e.target.value)}
+          />
+          <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Нууц үг</label>
+          <input
+            type="password"
+            required
+            className="cn-input w-full px-3 py-2 text-sm mb-4"
+            placeholder="••••••••"
+            value={teacherPassword}
+            onChange={(e) => setTeacherPassword(e.target.value)}
+          />
+          <button
+            type="submit"
+            disabled={teacherLoginLoading || !teacherEmail.trim() || !teacherPassword}
+            className="cn-btn-primary w-full rounded-md py-2 text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2"
+          >
+            {teacherLoginLoading ? <Loader2 size={16} className="animate-spin" /> : null}
+            Нэвтрэх
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowTeacherLogin(false)}
+            className="w-full text-xs mt-3 underline"
+            style={{ color: "#6B6858" }}
+          >
+            Буцах
+          </button>
+        </form>
+      )}
 
       {showNamePrompt && (
         <div className="cn-card rounded-xl p-5 mt-6 w-full max-w-sm">
@@ -411,7 +574,7 @@ function RoleSelect({ showNamePrompt, setShowNamePrompt, nameInput, setNameInput
   );
 }
 
-function TopBar({ role, studentName, onExit }) {
+function TopBar({ role, studentName, teacherEmail, onExit }) {
   return (
     <div className="flex items-center justify-between mb-6">
       <button onClick={onExit} className="flex items-center gap-1.5 text-sm" style={{ color: "#6B6858" }}>
@@ -421,6 +584,11 @@ function TopBar({ role, studentName, onExit }) {
         {role === "student" && (
           <span className="text-sm" style={{ color: "#6B6858" }}>
             Сурагч: <strong>{studentName}</strong>
+          </span>
+        )}
+        {role === "teacher" && teacherEmail && (
+          <span className="text-sm" style={{ color: "#6B6858" }}>
+            Багш: <strong>{teacherEmail}</strong>
           </span>
         )}
         <span className="cn-tag">{role === "teacher" ? "Багшийн горим" : "Сурагчийн горим"}</span>

@@ -6,8 +6,11 @@
 
 1. https://supabase.com дээр үнэгүй бүртгүүлж, шинэ project үүсгэнэ (Database password-оо тэмдэглэж ав).
 2. Project нээгдсэний дараа зүүн талын цэснээс **SQL Editor** руу орно.
-3. Энэ репо доторх `supabase-schema.sql` файлын бүх агуулгыг хуулж, SQL Editor-т буулгаад **Run** дарна. Ингэснээр `lessons`, `quizzes`, `attempts` гэсэн 3 хүснэгт болон холбогдох эрхүүд (RLS policy) үүснэ.
-4. Зүүн талын цэснээс **Project Settings → API** руу орж, дараах 2 утгыг хуулж ав:
+3. Энэ репо доторх `supabase-schema.sql` файлын бүх агуулгыг хуулж, SQL Editor-т буулгаад **Run** дарна.
+4. Хэрэв өмнө нь хуучин schema ажиллуулсан бол **нэмж** `supabase-teacher-auth.sql`-ийг Run хийнэ (багшийн эрхийн policy).
+5. **Authentication → Providers → Email** идэвхтэй эсэхийг шалгана.
+6. **Authentication → Users → Add user** дарж багшийн имэйл, нууц үг үүсгэнэ (эсвэл апп дээр бүртгүүлэхийг зөвшөөрнө).
+7. Зүүн талын цэснээс **Project Settings → API** руу орж, дараах 2 утгыг хуулж ав:
    - **Project URL** (жишээ нь `https://xxxxx.supabase.co`)
    - **anon public key**
 
@@ -43,14 +46,11 @@ npm run dev
    - `VITE_SUPABASE_ANON_KEY`
 5. **Deploy** дарна. Хэдэн минутын дараа таны апп нээлттэй линктэй болно.
 
-## Аюулгүй байдлын тэмдэглэл
+## Аюулгүй байдал
 
-Одоогийн `supabase-schema.sql` дотор байгаа Row Level Security policy-үүд нь **нээлттэй** — хэн ч (linktай хүн бүр) хичээл/шалгалт нэмэх, устгах боломжтой. Жижиг ангийн хэрэглээнд энэ хангалттай, гэхдээ олон нийтэд нээлттэй болгож байгаа бол дараах зүйлсийг нэмэхийг зөвлөж байна:
-
-- Supabase Auth ашиглан багш нарт нэвтрэх систем нэмэх
-- Зөвхөн нэвтэрсэн багш л `insert`/`delete` хийх боломжтой болгож RLS policy-г чангатгах
-
-Хэрэв ийм нэвтрэлтийн систем нэмэх шаардлагатай бол хэлээрэй, нэмж хөгжүүлье.
+- **Багш**: Supabase Auth (имэйл + нууц үг) ашиглан нэвтэрнэ. Зөвхөн нэвтэрсэн багш л хичээл/шалгалт нэмж, устгана.
+- **Сурагч**: Нэр оруулж орно (нэвтрэлтгүй). Хичээл унших, шалгалт өгөх боломжтой.
+- Олон нийтэд нээлттэй бол **Authentication → Settings** дээр шинэ хэрэглэгч бүртгүүлэхийг (`Enable email signups`) идэвхгүй болгож, багшийн account-ыг зөвхөн dashboard-аас үүсгээрэй.
 
 ## Файлын бүтэц
 
@@ -61,7 +61,8 @@ angiin-devter/
 │   ├── supabaseClient.js ← Supabase холболт
 │   ├── main.jsx
 │   └── index.css
-├── supabase-schema.sql   ← Supabase-д ажиллуулах SQL
+├── supabase-schema.sql        ← Supabase-д ажиллуулах SQL (шинэ project)
+├── supabase-teacher-auth.sql  ← Багшийн эрх — хуучин DB дээр migration
 ├── .env.example
 ├── vercel.json
 └── package.json
