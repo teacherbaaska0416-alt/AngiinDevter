@@ -350,6 +350,10 @@ function emptyQuestion() {
   };
 }
 
+function emptyQuizForm() {
+  return { title: "", subject: SUBJECTS[0], durationMinutes: 30, questions: [emptyQuestion()] };
+}
+
 function normalizeOption(o) {
   if (typeof o === "string") return { text: o, imageUrl: "" };
   return { text: o?.text || "", imageUrl: o?.imageUrl || "" };
@@ -387,6 +391,63 @@ function formatCountdown(totalSec) {
 
 function quizDeadlineKey(quizId, username) {
   return `quiz-deadline:${quizId}:${username || "anon"}`;
+}
+
+function quizShuffleKey(quizId, username) {
+  return `quiz-shuffle:${quizId}:${username || "anon"}`;
+}
+
+function shuffleArray(items) {
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+/** Сонголтуудыг хольж, зөв хариултын индексийг шинэ байрлалд нь тааруулна */
+function shuffleQuestionOptions(question) {
+  const q = normalizeQuestion(question);
+  const order = shuffleArray(q.options.map((_, i) => i));
+  const options = order.map((i) => q.options[i]);
+  const correct = order.indexOf(q.correct);
+  return {
+    ...q,
+    options,
+    correct: correct >= 0 ? correct : 0,
+  };
+}
+
+/** Асуулт болон хариултын байрлалыг сурагчид зориулж рандом болгоно */
+function shuffleQuizForStudent(quiz) {
+  return {
+    ...quiz,
+    questions: shuffleArray((quiz.questions || []).map(shuffleQuestionOptions)),
+  };
+}
+
+function loadOrCreateStudentQuiz(quiz, username) {
+  const key = quizShuffleKey(quiz.id, username);
+  const expectedLen = (quiz.questions || []).length;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (raw) {
+      const saved = JSON.parse(raw);
+      if (Array.isArray(saved?.questions) && saved.questions.length === expectedLen) {
+        return { ...quiz, questions: saved.questions.map(normalizeQuestion) };
+      }
+    }
+  } catch {
+    // ignore
+  }
+  const shuffled = shuffleQuizForStudent(quiz);
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ questions: shuffled.questions }));
+  } catch {
+    // ignore
+  }
+  return shuffled;
 }
 
 function fmtDate(ts) {
@@ -436,12 +497,8 @@ export default function ClassroomApp() {
   const [quizResult, setQuizResult] = useState(null);
 
   const [lessonForm, setLessonForm] = useState({ title: "", subject: SUBJECTS[0], content: "" });
-  const [quizForm, setQuizForm] = useState({
-    title: "",
-    subject: SUBJECTS[0],
-    durationMinutes: 30,
-    questions: [emptyQuestion()],
-  });
+  const [quizForm, setQuizForm] = useState(emptyQuizForm);
+  const [editingQuizId, setEditingQuizId] = useState(null);
   const [classForm, setClassForm] = useState({ grade: 7, section: "А" });
 
   const mapLesson = (l) => ({ id: l.id, title: l.title, subject: l.subject, content: l.content, createdAt: new Date(l.created_at).getTime() });
@@ -717,17 +774,60 @@ export default function ClassroomApp() {
     return data.publicUrl;
   }
 
-  async function addQuiz() {
+  function resetQuizForm() {
+    setEditingQuizId(null);
+    setQuizForm(emptyQuizForm());
+  }
+
+  function startEditQuiz(quiz) {
+    if (!quiz) return;
+    const questions = (quiz.questions || []).map(normalizeQuestion);
+    setEditingQuizId(quiz.id);
+    setQuizForm({
+      title: quiz.title || "",
+      subject: quiz.subject || SUBJECTS[0],
+      durationMinutes: Number(quiz.durationMinutes) > 0 ? Number(quiz.durationMinutes) : 30,
+      questions: questions.length ? questions : [emptyQuestion()],
+    });
+  }
+
+  async function saveQuiz() {
     if (!quizFormValid()) return false;
     const questions = quizForm.questions.map(normalizeQuestion);
     const durationMinutes = Math.max(1, Math.round(Number(quizForm.durationMinutes) || 30));
+    const payload = {
+      title: quizForm.title,
+      subject: quizForm.subject,
+      questions,
+      duration_minutes: durationMinutes,
+    };
+
+    if (editingQuizId) {
+      const { data, error } = await supabase
+        .from("quizzes")
+        .update(payload)
+        .eq("id", editingQuizId)
+        .select()
+        .single();
+      if (error) {
+        if (error.code === "42501" || error.message?.includes("policy")) {
+          setSaveError("Шалгалт засах эрх хүрэлцэхгүй. Багшаар нэвтэрсэн эсэхээ шалгана уу.");
+        } else if (error.message?.includes("duration_minutes") || error.message?.includes("is_open")) {
+          setSaveError("Шалгалтын хугацааны багана байхгүй. Supabase SQL Editor-т supabase-quiz-timing.sql-ийг Run хийнэ үү.");
+        } else {
+          setSaveError("Шалгалт шинэчлэхэд алдаа гарлаа.");
+        }
+        return false;
+      }
+      setQuizzes((prev) => prev.map((q) => (q.id === editingQuizId ? mapQuiz(data) : q)));
+      resetQuizForm();
+      return true;
+    }
+
     const { data, error } = await supabase
       .from("quizzes")
       .insert({
-        title: quizForm.title,
-        subject: quizForm.subject,
-        questions,
-        duration_minutes: durationMinutes,
+        ...payload,
         is_open: false,
       })
       .select()
@@ -741,13 +841,14 @@ export default function ClassroomApp() {
       return false;
     }
     setQuizzes((prev) => [mapQuiz(data), ...prev]);
-    setQuizForm({ title: "", subject: SUBJECTS[0], durationMinutes: 30, questions: [emptyQuestion()] });
+    resetQuizForm();
     return true;
   }
 
   async function deleteQuiz(id) {
     const prev = quizzes;
     setQuizzes(quizzes.filter((q) => q.id !== id));
+    if (editingQuizId === id) resetQuizForm();
     const { error } = await supabase.from("quizzes").delete().eq("id", id);
     if (error) {
       setSaveError("Шалгалт устгахад алдаа гарлаа.");
@@ -984,6 +1085,7 @@ export default function ClassroomApp() {
       }
       try {
         sessionStorage.removeItem(quizDeadlineKey(activeQuiz.id, studentSession?.username));
+        sessionStorage.removeItem(quizShuffleKey(activeQuiz.id, studentSession?.username));
       } catch {
         // ignore
       }
@@ -1203,7 +1305,10 @@ export default function ClassroomApp() {
               uploadQuizImage={uploadQuizImage}
               addQuestionToForm={addQuestionToForm}
               removeQuestionFromForm={removeQuestionFromForm}
-              addQuiz={addQuiz}
+              saveQuiz={saveQuiz}
+              editingQuizId={editingQuizId}
+              startEditQuiz={startEditQuiz}
+              resetQuizForm={resetQuizForm}
               deleteQuiz={deleteQuiz}
               setQuizOpen={setQuizOpen}
               quizFormValid={quizFormValid()}
@@ -1883,7 +1988,10 @@ function QuizBuilder({
   uploadQuizImage,
   addQuestionToForm,
   removeQuestionFromForm,
-  addQuiz,
+  saveQuiz,
+  editingQuizId,
+  startEditQuiz,
+  resetQuizForm,
   quizzes,
   deleteQuiz,
   setQuizOpen,
@@ -1895,6 +2003,20 @@ function QuizBuilder({
   const [importMsg, setImportMsg] = useState("");
   const [importLoading, setImportLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const isEditing = Boolean(editingQuizId);
+
+  function openCreateForm() {
+    resetQuizForm?.();
+    setImportMsg("");
+    setShowForm(true);
+  }
+
+  function openEditForm(quiz) {
+    startEditQuiz?.(quiz);
+    setImportMsg("");
+    setShowForm(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   async function handleQuizFile(file) {
     if (!file) return;
@@ -1919,7 +2041,7 @@ function QuizBuilder({
       setImportMsg(
         incomplete
           ? `${normalized.length} асуулт орууллаа. ${incomplete} асуултад мэдээлэл дутуу байна — засаад хадгална уу.`
-          : `${normalized.length} асуулт амжилттай орууллаа. Шаардлагатай бол засаад «Шалгалт хадгалах» дарна уу.`
+          : `${normalized.length} асуулт амжилттай орууллаа. Шаардлагатай бол засаад хадгална уу.`
       );
     } catch {
       setImportMsg("Файл уншихад алдаа гарлаа. .pdf эсвэл .txt формат ашиглана уу.");
@@ -1930,7 +2052,7 @@ function QuizBuilder({
   async function handleSaveQuiz() {
     if (!quizFormValid || saving) return;
     setSaving(true);
-    const ok = await addQuiz();
+    const ok = await saveQuiz();
     setSaving(false);
     if (ok) {
       setShowForm(false);
@@ -1941,6 +2063,7 @@ function QuizBuilder({
   function closeForm() {
     setShowForm(false);
     setImportMsg("");
+    resetQuizForm?.();
   }
 
   return (
@@ -1951,7 +2074,7 @@ function QuizBuilder({
         <div className="mb-5">
           <button
             type="button"
-            onClick={() => setShowForm(true)}
+            onClick={openCreateForm}
             className="cn-btn-primary rounded-md px-4 py-2.5 text-sm font-medium inline-flex items-center gap-1.5"
           >
             <Plus size={16} /> Шалгалт үүсгэх
@@ -1960,7 +2083,16 @@ function QuizBuilder({
       ) : (
         <div className="mb-6">
           <div className="flex items-center justify-between gap-3 mb-4">
-            <h3 className="cn-hand text-2xl" style={{ color: "#24478F" }}>Шалгалт үүсгэх</h3>
+            <div>
+              <h3 className="cn-hand text-2xl" style={{ color: "#24478F" }}>
+                {isEditing ? "Шалгалт засах" : "Шалгалт үүсгэх"}
+              </h3>
+              {isEditing ? (
+                <p className="text-xs mt-1" style={{ color: "#6B6858" }}>
+                  Гарчиг, хугацаа, асуулт, хариултыг засаад «Өөрчлөлт хадгалах» дарна уу. Нээлттэй/хаалттай төлөв хэвээр үлдэнэ.
+                </p>
+              ) : null}
+            </div>
             <button type="button" onClick={closeForm} className="cn-btn-secondary rounded-md px-3 py-1.5 text-xs">
               Болих
             </button>
@@ -2128,7 +2260,7 @@ function QuizBuilder({
                   className="cn-btn-primary rounded-md px-4 py-1.5 text-sm font-medium disabled:opacity-40 flex items-center gap-1.5"
                 >
                   {saving ? <Loader2 size={14} className="animate-spin" /> : null}
-                  Шалгалт хадгалах
+                  {isEditing ? "Өөрчлөлт хадгалах" : "Шалгалт хадгалах"}
                 </button>
                 <button type="button" onClick={closeForm} className="text-xs underline" style={{ color: "#6B6858" }}>
                   Болих
@@ -2171,7 +2303,15 @@ function QuizBuilder({
                   </span>
                 </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => openEditForm(q)}
+                  className="cn-btn-secondary rounded-md px-3 py-1.5 text-xs font-medium flex items-center gap-1.5"
+                  title="Шалгалт засах"
+                >
+                  <PencilLine size={13} /> Засах
+                </button>
                 <button
                   type="button"
                   onClick={() => setQuizOpen?.(q.id, !q.isOpen)}
@@ -2293,7 +2433,7 @@ function LessonDetail({ setTab, activeLesson }) {
   );
 }
 
-function QuizList({ setTab, quizzes, setActiveQuiz, setQuizAnswers }) {
+function QuizList({ setTab, quizzes, setActiveQuiz, setQuizAnswers, studentUsername }) {
   return (
     <div>
       <BackRow onBack={() => setTab("home")} title="Шалгалтууд" />
@@ -2310,7 +2450,7 @@ function QuizList({ setTab, quizzes, setActiveQuiz, setQuizAnswers }) {
                 disabled={!open}
                 onClick={() => {
                   if (!open) return;
-                  setActiveQuiz(q);
+                  setActiveQuiz(loadOrCreateStudentQuiz(q, studentUsername));
                   setQuizAnswers({});
                   setTab("quiz");
                 }}
@@ -2420,6 +2560,7 @@ function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz,
       <BackRow onBack={() => setTab("quizzes")} title={activeQuiz.title} />
       <p className="text-xs mb-4" style={{ color: "#6B6858" }}>
         Нийт хугацаа: {durationMinutes} минут. Цаг дуусмагц автоматаар илгээнэ.
+        Асуулт болон хариултын дараалал сурагч бүрт өөр байна.
       </p>
       <div className="space-y-4">
         {questions.map((q, qi) => (
