@@ -48,6 +48,17 @@ create table if not exists classes (
 
 create index if not exists classes_teacher_id_idx on classes(teacher_id);
 
+create table if not exists subjects (
+  id uuid primary key default gen_random_uuid(),
+  teacher_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists subjects_teacher_id_idx on subjects(teacher_id);
+create unique index if not exists subjects_teacher_name_key
+  on subjects (teacher_id, lower(name));
+
 do $$
 begin
   if not exists (
@@ -84,6 +95,7 @@ alter table quizzes enable row level security;
 alter table attempts enable row level security;
 alter table classes enable row level security;
 alter table students enable row level security;
+alter table subjects enable row level security;
 
 -- Унших: хэн ч (сурагч link-ээр орж хичээл/шалгалт харна)
 create policy "Public read lessons" on lessons for select using (true);
@@ -111,6 +123,18 @@ create policy "Teachers insert own classes" on classes
 
 create policy "Teachers delete own classes" on classes
   for delete to authenticated
+  using (teacher_id = auth.uid());
+
+create policy "Teachers read own subjects"
+  on subjects for select to authenticated
+  using (teacher_id = auth.uid());
+
+create policy "Teachers insert own subjects"
+  on subjects for insert to authenticated
+  with check (teacher_id = auth.uid());
+
+create policy "Teachers delete own subjects"
+  on subjects for delete to authenticated
   using (teacher_id = auth.uid());
 
 -- Сурагчид: багш зөвхөн өөрийн ангийн сурагчдыг удирдана

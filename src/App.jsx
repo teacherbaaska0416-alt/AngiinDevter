@@ -32,18 +32,6 @@ import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
 GlobalWorkerOptions.workerSrc = pdfWorker;
 
-const SUBJECTS = [
-  "Математик",
-  "Физик",
-  "Хими",
-  "Биологи",
-  "Түүх",
-  "Газарзүй",
-  "Монгол хэл",
-  "Англи хэл",
-  "Бусад",
-];
-
 const LETTERS = ["А", "Б", "В", "Г", "Д", "Е"];
 const GRADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 const CLASS_SECTIONS = ["А", "Б", "В", "Г", "Д", "Е"];
@@ -221,24 +209,33 @@ function quizLetterIndex(ch) {
   return QUIZ_LETTER_INDEX[up] != null ? QUIZ_LETTER_INDEX[up] : null;
 }
 
+function matchSubjectName(raw, names) {
+  const s = String(raw || "").trim();
+  const list = (names || []).filter(Boolean);
+  if (!s) return list[0] || "";
+  const exact = list.find((x) => x.toLowerCase() === s.toLowerCase());
+  if (exact) return exact;
+  const fuzzy = list.find(
+    (x) => s.toLowerCase().includes(x.toLowerCase()) || x.toLowerCase().includes(s.toLowerCase())
+  );
+  if (fuzzy) return fuzzy;
+  return s;
+}
+
 /** Тогтмол форматтай текстээс шалгалтын асуулт гаргана */
-function parseQuizFromText(raw) {
+function parseQuizFromText(raw, subjectNames = []) {
   const text = String(raw || "")
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .replace(/\u00a0/g, " ");
 
   let title = "";
-  let subject = SUBJECTS[0];
+  let subject = subjectNames[0] || "";
   const titleMatch = text.match(/^\s*Гарчиг\s*[:：]\s*(.+)$/im);
   if (titleMatch) title = titleMatch[1].trim();
   const subjectMatch = text.match(/^\s*Хичээл\s*[:：]\s*(.+)$/im);
   if (subjectMatch) {
-    const s = subjectMatch[1].trim();
-    subject =
-      SUBJECTS.find((x) => x.toLowerCase() === s.toLowerCase()) ||
-      SUBJECTS.find((x) => s.toLowerCase().includes(x.toLowerCase())) ||
-      SUBJECTS[0];
+    subject = matchSubjectName(subjectMatch[1], subjectNames);
   }
 
   const re = /(?:^|\n)\s*(\d+)\s*[\.\)]\s*([\s\S]*?)(?=(?:\n\s*\d+\s*[\.\)]\s*)|$)/g;
@@ -341,7 +338,7 @@ async function extractTextFromPdfFile(file) {
   return pages.join("\n\n");
 }
 
-async function readQuizFromFile(file) {
+async function readQuizFromFile(file, subjectNames = []) {
   const name = (file.name || "").toLowerCase();
   let text = "";
   if (name.endsWith(".pdf")) {
@@ -349,7 +346,7 @@ async function readQuizFromFile(file) {
   } else {
     text = await file.text();
   }
-  return { text, parsed: parseQuizFromText(text) };
+  return { text, parsed: parseQuizFromText(text, subjectNames) };
 }
 
 function emptyOption() {
@@ -369,7 +366,7 @@ function emptyQuestion() {
 function emptyQuizForm() {
   return {
     title: "",
-    subject: SUBJECTS[0],
+    subject: "",
     durationMinutes: 30,
     classId: "",
     grade: "",
@@ -955,6 +952,7 @@ export default function ClassroomApp() {
   const [quizzes, setQuizzes] = useState([]);
   const [attempts, setAttempts] = useState([]);
   const [classes, setClasses] = useState([]);
+  const [subjects, setSubjects] = useState([]);
   const [students, setStudents] = useState([]);
   const [activeClassId, setActiveClassId] = useState(null);
   const [studentLastNameInput, setStudentLastNameInput] = useState("");
@@ -970,12 +968,18 @@ export default function ClassroomApp() {
   const [quizAnswers, setQuizAnswers] = useState({});
   const [quizResult, setQuizResult] = useState(null);
 
-  const [lessonForm, setLessonForm] = useState({ title: "", subject: SUBJECTS[0], content: "" });
+  const [lessonForm, setLessonForm] = useState({ title: "", subject: "", content: "" });
   const [quizForm, setQuizForm] = useState(emptyQuizForm);
   const [editingQuizId, setEditingQuizId] = useState(null);
   const [classForm, setClassForm] = useState({ grade: 7, section: "А" });
 
   const mapLesson = (l) => ({ id: l.id, title: l.title, subject: l.subject, content: l.content, createdAt: new Date(l.created_at).getTime() });
+  const mapSubject = (s) => ({
+    id: s.id,
+    teacherId: s.teacher_id,
+    name: s.name,
+    createdAt: new Date(s.created_at).getTime(),
+  });
   const mapClass = (c) => ({
     id: c.id,
     name: c.name,
@@ -1018,12 +1022,13 @@ export default function ClassroomApp() {
       return;
     }
     try {
-      const [lessonsRes, quizzesRes, attemptsRes, classesRes, studentsRes] = await Promise.all([
+      const [lessonsRes, quizzesRes, attemptsRes, classesRes, studentsRes, subjectsRes] = await Promise.all([
         supabase.from("lessons").select("*").order("created_at", { ascending: false }),
         supabase.from("quizzes").select("*").order("created_at", { ascending: false }),
         supabase.from("attempts").select("*").order("date", { ascending: false }),
         supabase.from("classes").select("*").order("created_at", { ascending: false }),
         supabase.from("students").select("*").order("student_no", { ascending: true }),
+        supabase.from("subjects").select("*").order("created_at", { ascending: true }),
       ]);
       if (lessonsRes.error || quizzesRes.error || attemptsRes.error) {
         throw lessonsRes.error || quizzesRes.error || attemptsRes.error;
@@ -1041,6 +1046,11 @@ export default function ClassroomApp() {
       } else {
         setStudents([]);
       }
+      if (!subjectsRes.error) {
+        setSubjects((subjectsRes.data || []).map(mapSubject));
+      } else {
+        setSubjects([]);
+      }
     } catch (e) {
       setSaveError("Дата ачаалахад алдаа гарлаа. Supabase тохиргоогоо шалгана уу.");
     }
@@ -1050,6 +1060,22 @@ export default function ClassroomApp() {
   useEffect(() => {
     loadAll();
   }, [loadAll]);
+
+  useEffect(() => {
+    const names = subjects.map((s) => s.name);
+    const first = names[0] || "";
+    setLessonForm((f) => {
+      if (!names.length) return f.subject ? { ...f, subject: "" } : f;
+      if (f.subject && names.includes(f.subject)) return f;
+      return { ...f, subject: first };
+    });
+    setQuizForm((f) => {
+      if (f.subject && (names.includes(f.subject) || editingQuizId)) return f;
+      if (!names.length) return f.subject && editingQuizId ? f : { ...f, subject: "" };
+      if (!f.subject) return { ...f, subject: first };
+      return f;
+    });
+  }, [subjects, editingQuizId]);
 
   useEffect(() => {
     if (!supabase) return undefined;
@@ -1168,6 +1194,7 @@ export default function ClassroomApp() {
         setTeacherUser(null);
         setClasses([]);
         setStudents([]);
+        setSubjects([]);
         setActiveClassId(null);
       }
     });
@@ -1334,7 +1361,7 @@ export default function ClassroomApp() {
   }
 
   async function addLesson() {
-    if (!lessonForm.title.trim() || !lessonForm.content.trim()) return;
+    if (!lessonForm.title.trim() || !lessonForm.content.trim() || !lessonForm.subject.trim()) return;
     const { data, error } = await supabase
       .from("lessons")
       .insert({ title: lessonForm.title, subject: lessonForm.subject, content: lessonForm.content })
@@ -1347,7 +1374,60 @@ export default function ClassroomApp() {
       return;
     }
     setLessons((prev) => [mapLesson(data), ...prev]);
-    setLessonForm({ title: "", subject: SUBJECTS[0], content: "" });
+    setLessonForm({ title: "", subject: subjects[0]?.name || "", content: "" });
+  }
+
+  async function addSubject(rawName) {
+    const name = String(rawName || "").trim();
+    if (!name) return false;
+    if (!teacherUser?.id) {
+      setSaveError("Хичээл үүсгэхийн тулд багшаар нэвтэрнэ үү.");
+      return false;
+    }
+    if (subjects.some((s) => s.name.toLowerCase() === name.toLowerCase())) {
+      setSaveError("Ийм нэртэй хичээл аль хэдийн байна.");
+      return false;
+    }
+    const { data, error } = await supabase
+      .from("subjects")
+      .insert({ teacher_id: teacherUser.id, name })
+      .select()
+      .single();
+    if (error) {
+      if (error.code === "23505") {
+        setSaveError("Ийм нэртэй хичээл аль хэдийн байна.");
+      } else if (error.code === "42P01" || error.message?.includes("schema cache") || error.message?.includes("subjects")) {
+        setSaveError("Хичээлийн хүснэгт байхгүй. Supabase SQL Editor-т supabase-subjects.sql-ийг Run хийнэ үү.");
+      } else if (error.code === "42501" || error.message?.includes("policy")) {
+        setSaveError("Хичээл үүсгэх эрх хүрэлцэхгүй. Багшаар нэвтэрсэн эсэхээ шалгана уу.");
+      } else {
+        setSaveError("Хичээл үүсгэхэд алдаа гарлаа.");
+      }
+      return false;
+    }
+    setSaveError("");
+    const mapped = mapSubject(data);
+    setSubjects((prev) => [...prev, mapped].sort((a, b) => a.createdAt - b.createdAt));
+    setLessonForm((f) => (f.subject ? f : { ...f, subject: mapped.name }));
+    setQuizForm((f) => (f.subject ? f : { ...f, subject: mapped.name }));
+    return true;
+  }
+
+  async function deleteSubject(id) {
+    const prev = subjects;
+    const removed = subjects.find((s) => s.id === id);
+    const next = subjects.filter((s) => s.id !== id);
+    setSubjects(next);
+    if (removed) {
+      const fallback = next[0]?.name || "";
+      setLessonForm((f) => (f.subject === removed.name ? { ...f, subject: fallback } : f));
+      setQuizForm((f) => (f.subject === removed.name && !editingQuizId ? { ...f, subject: fallback } : f));
+    }
+    const { error } = await supabase.from("subjects").delete().eq("id", id);
+    if (error) {
+      setSaveError("Хичээл устгахад алдаа гарлаа.");
+      setSubjects(prev);
+    }
   }
 
   async function deleteLesson(id) {
@@ -1404,6 +1484,7 @@ export default function ClassroomApp() {
 
   function quizFormValid() {
     if (!quizForm.title.trim()) return false;
+    if (!quizForm.subject.trim()) return false;
     if (!(Number(quizForm.durationMinutes) > 0)) return false;
     if (!quizForm.classId && !(Number(quizForm.grade) > 0)) return false;
     return quizForm.questions.every(
@@ -1417,6 +1498,7 @@ export default function ClassroomApp() {
   function quizFormMissingHints() {
     const hints = [];
     if (!quizForm.title.trim()) hints.push("Шалгалтын гарчиг оруулна");
+    if (!quizForm.subject.trim()) hints.push("Хичээл сонгоно. Эхлээд «Хичээлүүд» хэсэгт заах хичээлээ үүсгэнэ");
     if (!(Number(quizForm.durationMinutes) > 0)) hints.push("Шалгалтын хугацаа (минут) оруулна");
     if (!quizForm.classId && !(Number(quizForm.grade) > 0)) {
       hints.push(classes.length ? "Шалгалт харагдах ангийг сонгоно" : "Түвшин (анги) сонгоно, эсвэл эхлээд анги үүсгэнэ");
@@ -1478,6 +1560,7 @@ export default function ClassroomApp() {
     const only = classes.length === 1 ? classes[0] : null;
     setQuizForm({
       ...emptyQuizForm(),
+      subject: subjects[0]?.name || "",
       classId: only?.id || "",
       grade: only?.grade ?? "",
     });
@@ -1489,7 +1572,7 @@ export default function ClassroomApp() {
     setEditingQuizId(quiz.id);
     setQuizForm({
       title: quiz.title || "",
-      subject: quiz.subject || SUBJECTS[0],
+      subject: quiz.subject || subjects[0]?.name || "",
       durationMinutes: Number(quiz.durationMinutes) > 0 ? Number(quiz.durationMinutes) : 30,
       classId: quiz.classId || "",
       grade: quiz.grade ?? "",
@@ -2205,6 +2288,9 @@ export default function ClassroomApp() {
               tab={teacherTab}
               setTab={setTeacherTab}
               lessons={lessons}
+              subjects={subjects}
+              addSubject={addSubject}
+              deleteSubject={deleteSubject}
               quizzes={quizzes}
               attempts={allAttemptsSorted}
               classes={classes}
@@ -2560,7 +2646,7 @@ function NavCard({ icon, label, sub, onClick }) {
 /* ---------------- TEACHER ---------------- */
 
 function TeacherView(props) {
-  const { tab, setTab, lessons, quizzes, attempts, classes } = props;
+  const { tab, setTab, lessons, quizzes, attempts, classes, subjects = [] } = props;
 
   if (tab === "home") {
     return (
@@ -2568,7 +2654,7 @@ function TeacherView(props) {
         <h2 className="cn-hand text-4xl mb-5" style={{ color: "#24478F" }}>Багшийн самбар</h2>
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <NavCard icon={<School size={22} color="#24478F" />} label="Анги үүсгэх" sub={`${classes.length} анги`} onClick={() => setTab("class")} />
-          <NavCard icon={<PencilLine size={22} color="#24478F" />} label="Хичээл нэмэх" sub={`${lessons.length} хичээл`} onClick={() => setTab("lesson")} />
+          <NavCard icon={<PencilLine size={22} color="#24478F" />} label="Хичээлүүд" sub={`${subjects.length} хичээл · ${lessons.length} материал`} onClick={() => setTab("lesson")} />
           <NavCard icon={<ClipboardList size={22} color="#24478F" />} label="Шалгалт үүсгэх" sub={`${quizzes.length} шалгалт`} onClick={() => setTab("quiz")} />
           <NavCard icon={<Trophy size={22} color="#24478F" />} label="Сурагчдын үр дүн" sub={`${attempts.length} оролдлого`} onClick={() => setTab("results")} />
         </div>
@@ -2589,6 +2675,26 @@ function BackRow({ onBack, title }) {
       <button onClick={onBack} className="cn-btn-secondary rounded-md px-2 py-1.5"><ArrowLeft size={16} /></button>
       <h2 className="cn-hand text-3xl" style={{ color: "#24478F" }}>{title}</h2>
     </div>
+  );
+}
+
+function SubjectSelect({ subjects = [], value, onChange }) {
+  const names = subjects.map((s) => s.name);
+  const extra = value && !names.includes(value) ? [value] : [];
+  return (
+    <select
+      className="cn-select w-full px-3 py-2 text-sm mb-3"
+      value={value || ""}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      <option value="">{names.length ? "Хичээл сонгоно уу" : "Эхлээд хичээл үүсгэнэ үү"}</option>
+      {names.map((n) => (
+        <option key={n} value={n}>{n}</option>
+      ))}
+      {extra.map((n) => (
+        <option key={`extra-${n}`} value={n}>{n}</option>
+      ))}
+    </select>
   );
 }
 
@@ -2865,24 +2971,89 @@ function ClassBuilder({
   );
 }
 
-function LessonBuilder({ setTab, lessonForm, setLessonForm, addLesson, lessons, deleteLesson }) {
+function LessonBuilder({
+  setTab,
+  lessonForm,
+  setLessonForm,
+  addLesson,
+  lessons,
+  deleteLesson,
+  subjects = [],
+  addSubject,
+  deleteSubject,
+}) {
+  const [subjectName, setSubjectName] = useState("");
+  const [addingSubject, setAddingSubject] = useState(false);
+
+  async function handleAddSubject(e) {
+    e?.preventDefault();
+    if (!subjectName.trim() || addingSubject) return;
+    setAddingSubject(true);
+    const ok = await addSubject?.(subjectName);
+    setAddingSubject(false);
+    if (ok) setSubjectName("");
+  }
+
   return (
     <div>
-      <BackRow onBack={() => setTab("home")} title="Хичээлийн материал" />
+      <BackRow onBack={() => setTab("home")} title="Хичээлүүд" />
       <div className="cn-card rounded-xl p-5 mb-6">
+        <h3 className="text-sm font-semibold mb-1" style={{ color: "#24478F" }}>Миний заах хичээлүүд</h3>
+        <p className="text-xs mb-3" style={{ color: "#6B6858" }}>
+          Энд үүсгэсэн хичээлүүд шалгалт болон хичээлийн материалд сонголтоор гарна.
+        </p>
+        <form onSubmit={handleAddSubject} className="flex flex-wrap gap-2 mb-3">
+          <input
+            className="cn-input flex-1 min-w-[12rem] px-3 py-2 text-sm"
+            placeholder="Жишээ: Математик"
+            value={subjectName}
+            onChange={(e) => setSubjectName(e.target.value)}
+            maxLength={80}
+          />
+          <button
+            type="submit"
+            disabled={!subjectName.trim() || addingSubject}
+            className="cn-btn-primary rounded-md px-4 py-2 text-sm font-medium disabled:opacity-40 flex items-center gap-1.5"
+          >
+            {addingSubject ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+            Хичээл нэмэх
+          </button>
+        </form>
+        {subjects.length === 0 ? (
+          <p className="text-xs" style={{ color: "#6B6858" }}>Одоогоор хичээл үүсгээгүй байна.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {subjects.map((s) => (
+              <span key={s.id} className="cn-tag inline-flex items-center gap-1.5">
+                {s.name}
+                <button
+                  type="button"
+                  onClick={() => deleteSubject?.(s.id)}
+                  className="leading-none"
+                  style={{ color: "#9A3324" }}
+                  title="Устгах"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="cn-card rounded-xl p-5 mb-6">
+        <h3 className="text-sm font-semibold mb-3" style={{ color: "#24478F" }}>Хичээлийн материал</h3>
         <input
           className="cn-input w-full px-3 py-2 text-sm mb-3"
           placeholder="Хичээлийн гарчиг"
           value={lessonForm.title}
           onChange={(e) => setLessonForm((f) => ({ ...f, title: e.target.value }))}
         />
-        <select
-          className="cn-select w-full px-3 py-2 text-sm mb-3"
+        <SubjectSelect
+          subjects={subjects}
           value={lessonForm.subject}
-          onChange={(e) => setLessonForm((f) => ({ ...f, subject: e.target.value }))}
-        >
-          {SUBJECTS.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
+          onChange={(subject) => setLessonForm((f) => ({ ...f, subject }))}
+        />
         <textarea
           className="cn-textarea w-full px-3 py-2 text-sm mb-3"
           rows={8}
@@ -2892,16 +3063,16 @@ function LessonBuilder({ setTab, lessonForm, setLessonForm, addLesson, lessons, 
         />
         <button
           onClick={addLesson}
-          disabled={!lessonForm.title.trim() || !lessonForm.content.trim()}
+          disabled={!lessonForm.title.trim() || !lessonForm.content.trim() || !lessonForm.subject.trim()}
           className="cn-btn-primary rounded-md px-4 py-2 text-sm font-medium disabled:opacity-40 flex items-center gap-1.5"
         >
-          <Plus size={15} /> Хичээл хадгалах
+          <Plus size={15} /> Материал хадгалах
         </button>
       </div>
 
-      <h3 className="text-sm font-semibold mb-3" style={{ color: "#6B6858" }}>Нэмэгдсэн хичээлүүд ({lessons.length})</h3>
+      <h3 className="text-sm font-semibold mb-3" style={{ color: "#6B6858" }}>Нэмэгдсэн материалууд ({lessons.length})</h3>
       {lessons.length === 0 ? (
-        <EmptyState text="Одоогоор хичээл нэмээгүй байна." />
+        <EmptyState text="Одоогоор хичээлийн материал нэмээгүй байна." />
       ) : (
         <div className="space-y-2">
           {lessons.map((l) => (
@@ -2994,6 +3165,7 @@ function QuizBuilder({
   quizFormValid,
   quizFormMissingHints = [],
   classes = [],
+  subjects = [],
 }) {
   const fileRef = useRef(null);
   const [showForm, setShowForm] = useState(false);
@@ -3020,7 +3192,7 @@ function QuizBuilder({
     setImportLoading(true);
     setImportMsg("");
     try {
-      const { parsed } = await readQuizFromFile(file);
+      const { parsed } = await readQuizFromFile(file, subjects.map((s) => s.name));
       if (!parsed.questions.length) {
         setImportMsg("Асуулт олдсонгүй. Загварын форматыг шалгана уу (1. Асуулт / А) Б) В) Г) / Зөв: Б / Оноо: 1).");
         setImportLoading(false);
@@ -3164,13 +3336,18 @@ function QuizBuilder({
               value={quizForm.title}
               onChange={(e) => setQuizForm((f) => ({ ...f, title: e.target.value }))}
             />
-            <select
-              className="cn-select w-full px-3 py-2 text-sm mb-3"
+            <SubjectSelect
+              subjects={subjects}
               value={quizForm.subject}
-              onChange={(e) => setQuizForm((f) => ({ ...f, subject: e.target.value }))}
-            >
-              {SUBJECTS.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+              onChange={(subject) => setQuizForm((f) => ({ ...f, subject }))}
+            />
+            {subjects.length === 0 ? (
+              <p className="text-xs mb-3" style={{ color: "#9A3324" }}>
+                Шалгалтад хичээл сонгохын тулд эхлээд{" "}
+                <button type="button" className="underline" onClick={() => setTab("lesson")}>Хичээлүүд</button>
+                {" "}хэсэгт заах хичээлээ үүсгэнэ үү.
+              </p>
+            ) : null}
             <div className="mb-4">
               <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>
                 Харагдах анги / түвшин
