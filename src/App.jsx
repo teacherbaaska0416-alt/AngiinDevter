@@ -23,6 +23,7 @@ import {
   Clock,
   Lock,
   Unlock,
+  Bell,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
@@ -883,6 +884,52 @@ function fmtDate(ts) {
   );
 }
 
+const LOGIN_REQUEST_KEY = "angiin-login-request";
+
+function studentSessionFromRow(data) {
+  return {
+    id: data.id,
+    classId: data.class_id,
+    lastName: data.last_name || "",
+    firstName: data.first_name || "",
+    name: data.name || fullStudentName(data.last_name, data.first_name),
+    username: data.username,
+    studentNo: data.student_no,
+    className: data.class_name || "",
+    grade: data.class_grade != null ? Number(data.class_grade) : parseGradeFromClassName(data.class_name),
+  };
+}
+
+function mapLoginRequest(r) {
+  return {
+    id: r.id,
+    studentId: r.student_id,
+    classId: r.class_id,
+    teacherId: r.teacher_id,
+    username: r.username,
+    studentName: r.student_name,
+    className: r.class_name,
+    status: r.status,
+    createdAt: new Date(r.created_at).getTime(),
+  };
+}
+
+function loginRequestMissing(error) {
+  const msg = error?.message || "";
+  return (
+    error?.code === "PGRST202" ||
+    error?.code === "42P01" ||
+    /request_student_login|get_student_login_request|decide_student_login|student_login_requests|schema cache/i.test(msg)
+  );
+}
+
+function loginStatusMessage(status) {
+  if (status === "rejected") return "Багш нэвтрэлтийг зөвшөөрсөнгүй.";
+  if (status === "cancelled") return "Нэвтрэх хүсэлт цуцлагдлаа.";
+  if (status === "expired") return "Хүсэлтийн хугацаа дууслаа. Дахин оролдоно уу.";
+  return "Нэвтрэх хүсэлт амжилтгүй боллоо.";
+}
+
 export default function ClassroomApp() {
   const [role, setRole] = useState(null); // null | 'teacher' | 'student'
   const [showNamePrompt, setShowNamePrompt] = useState(false);
@@ -892,6 +939,9 @@ export default function ClassroomApp() {
   const [studentSession, setStudentSession] = useState(null); // { id, username, name, classId, className, ... }
   const [studentLoginError, setStudentLoginError] = useState("");
   const [studentLoginLoading, setStudentLoginLoading] = useState(false);
+  const [studentLoginRequest, setStudentLoginRequest] = useState(null);
+  const [loginRequests, setLoginRequests] = useState([]);
+  const [loginDecideBusy, setLoginDecideBusy] = useState(null);
   const [teacherUser, setTeacherUser] = useState(null);
   const [teacherLoginError, setTeacherLoginError] = useState("");
   const [teacherLoginLoading, setTeacherLoginLoading] = useState(false);
@@ -1124,9 +1174,131 @@ export default function ClassroomApp() {
     return () => subscription.unsubscribe();
   }, [loadAll]);
 
+  const enterStudentSession = useCallback(async (data) => {
+    if (!data?.id && !data?.username) return;
+    const session = studentSessionFromRow(data);
+    try {
+      sessionStorage.removeItem(LOGIN_REQUEST_KEY);
+    } catch {
+      // ignore
+    }
+    setStudentLoginRequest(null);
+    setStudentLoginError("");
+    setStudentSession(session);
+    setStudentName(session.name);
+    setNameInput("");
+    setShowNamePrompt(false);
+    setRole("student");
+    if (supabase) {
+      const { data: quizRows } = await supabase.from("quizzes").select("*").order("created_at", { ascending: false });
+      if (quizRows) setQuizzes(quizRows.map(mapQuiz));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!supabase) return;
+    try {
+      const raw = sessionStorage.getItem(LOGIN_REQUEST_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (saved?.id) {
+        setStudentLoginRequest(saved);
+        setShowNamePrompt(true);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!supabase || role !== null || !studentLoginRequest?.id) return undefined;
+    let cancelled = false;
+
+    const tick = async () => {
+      const { data, error } = await supabase.rpc("get_student_login_request", {
+        p_request_id: studentLoginRequest.id,
+      });
+      if (cancelled) return;
+      if (error) {
+        if (loginRequestMissing(error)) {
+          setStudentLoginError("Нэвтрэх зөвшөөрлийн хүснэгт байхгүй. Supabase SQL Editor-т supabase-student-login-approval.sql-ийг Run хийнэ үү.");
+        }
+        return;
+      }
+      const payload = data && typeof data === "object" ? data : null;
+      if (!payload) return;
+      if (payload.status === "approved" && payload.student) {
+        await enterStudentSession(payload.student);
+        return;
+      }
+      if (payload.status === "rejected" || payload.status === "cancelled" || payload.status === "expired") {
+        try {
+          sessionStorage.removeItem(LOGIN_REQUEST_KEY);
+        } catch {
+          // ignore
+        }
+        setStudentLoginRequest(null);
+        setStudentLoginError(loginStatusMessage(payload.status));
+        setShowNamePrompt(true);
+      }
+    };
+
+    tick();
+    const id = setInterval(tick, 1500);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [role, studentLoginRequest?.id, enterStudentSession]);
+
+  const loadLoginRequests = useCallback(async () => {
+    if (!supabase || !teacherUser) return;
+    const { data, error } = await supabase
+      .from("student_login_requests")
+      .select("*")
+      .eq("status", "pending")
+      .order("created_at", { ascending: false });
+    if (error) {
+      if (!loginRequestMissing(error)) setLoginRequests([]);
+      return;
+    }
+    setLoginRequests((data || []).map(mapLoginRequest));
+  }, [teacherUser]);
+
+  useEffect(() => {
+    if (!supabase || !teacherUser) {
+      setLoginRequests([]);
+      return undefined;
+    }
+    loadLoginRequests();
+    const pollId = setInterval(loadLoginRequests, 2000);
+    const channel = supabase
+      .channel("login-requests-live")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "student_login_requests" },
+        () => {
+          loadLoginRequests();
+        }
+      )
+      .subscribe();
+    const onVis = () => {
+      if (document.visibilityState === "visible") loadLoginRequests();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearInterval(pollId);
+      document.removeEventListener("visibilitychange", onVis);
+      supabase.removeChannel(channel);
+    };
+  }, [teacherUser, loadLoginRequests]);
+
   async function handleTeacherClick() {
     setShowNamePrompt(false);
     setTeacherLoginError("");
+    if (studentLoginRequest?.id) {
+      await cancelStudentLoginWait();
+    }
     if (teacherUser) {
       setRole("teacher");
       loadAll();
@@ -1688,45 +1860,81 @@ export default function ClassroomApp() {
     setStudentLoginLoading(true);
     setStudentLoginError("");
     try {
-      const { data, error } = await supabase.rpc("lookup_student_login", {
+      const { data, error } = await supabase.rpc("request_student_login", {
         p_username: username,
       });
       if (error) {
-        if (error.message?.includes("lookup_student_login") || error.code === "PGRST202") {
-          setStudentLoginError("Нэвтрэх функц байхгүй байна. Supabase SQL Editor-т supabase-student-login.sql-ийг Run хийнэ үү.");
-        } else {
-          setStudentLoginError("Нэвтрэхэд алдаа гарлаа. Дахин оролдоно уу.");
-        }
+        setStudentLoginError(
+          loginRequestMissing(error)
+            ? "Нэвтрэх зөвшөөрлийн хүснэгт байхгүй. Supabase SQL Editor-т supabase-student-login-approval.sql-ийг Run хийнэ үү."
+            : "Нэвтрэхэд алдаа гарлаа. Дахин оролдоно уу."
+        );
         setStudentLoginLoading(false);
         return;
       }
-      if (!data || !data.username) {
-        setStudentLoginError("Ийм нэвтрэх нэр бүртгэлгүй байна. Багшаасаа нэвтрэх нэрээ авна уу.");
+      const payload = data && typeof data === "object" ? data : null;
+      if (!payload?.ok) {
+        setStudentLoginError(
+          payload?.error === "no_class"
+            ? "Энэ сурагч ангид холбогдоогүй байна."
+            : "Ийм нэвтрэх нэр бүртгэлгүй байна. Багшаасаа нэвтрэх нэрээ авна уу."
+        );
         setStudentLoginLoading(false);
         return;
       }
-      const session = {
-        id: data.id,
-        classId: data.class_id,
-        lastName: data.last_name || "",
-        firstName: data.first_name || "",
-        name: data.name || fullStudentName(data.last_name, data.first_name),
-        username: data.username,
-        studentNo: data.student_no,
-        className: data.class_name || "",
-        grade: data.class_grade != null ? Number(data.class_grade) : parseGradeFromClassName(data.class_name),
+      const pending = {
+        id: payload.request_id,
+        status: "pending",
+        studentName: payload.student_name || "",
+        className: payload.class_name || "",
+        username: payload.username || username,
       };
-      setStudentSession(session);
-      setStudentName(session.name);
-      setNameInput("");
-      setShowNamePrompt(false);
-      setRole("student");
-      const { data: quizRows } = await supabase.from("quizzes").select("*").order("created_at", { ascending: false });
-      if (quizRows) setQuizzes(quizRows.map(mapQuiz));
+      try {
+        sessionStorage.setItem(LOGIN_REQUEST_KEY, JSON.stringify(pending));
+      } catch {
+        // ignore
+      }
+      setStudentLoginRequest(pending);
     } catch {
       setStudentLoginError("Нэвтрэхэд алдаа гарлаа. Дахин оролдоно уу.");
     }
     setStudentLoginLoading(false);
+  }
+
+  async function cancelStudentLoginWait() {
+    const id = studentLoginRequest?.id;
+    if (supabase && id) {
+      await supabase.rpc("cancel_student_login_request", { p_request_id: id });
+    }
+    try {
+      sessionStorage.removeItem(LOGIN_REQUEST_KEY);
+    } catch {
+      // ignore
+    }
+    setStudentLoginRequest(null);
+    setStudentLoginError("");
+    setShowNamePrompt(false);
+    setNameInput("");
+  }
+
+  async function decideLoginRequest(id, approved) {
+    if (!supabase || !id) return;
+    setLoginDecideBusy(id);
+    const { error } = await supabase.rpc("decide_student_login", {
+      p_request_id: id,
+      p_approved: approved,
+    });
+    setLoginDecideBusy(null);
+    if (error) {
+      setSaveError(
+        loginRequestMissing(error)
+          ? "Нэвтрэх зөвшөөрлийн хүснэгт байхгүй. Supabase SQL Editor-т supabase-student-login-approval.sql-ийг Run хийнэ үү."
+          : "Хүсэлт шийдэхэд алдаа гарлаа."
+      );
+      return;
+    }
+    setLoginRequests((list) => list.filter((r) => r.id !== id));
+    loadLoginRequests();
   }
 
   async function exitToRoleSelect() {
@@ -1734,6 +1942,15 @@ export default function ClassroomApp() {
       await supabase.auth.signOut();
       setTeacherUser(null);
     }
+    if (studentLoginRequest?.id && supabase) {
+      await supabase.rpc("cancel_student_login_request", { p_request_id: studentLoginRequest.id });
+    }
+    try {
+      sessionStorage.removeItem(LOGIN_REQUEST_KEY);
+    } catch {
+      // ignore
+    }
+    setStudentLoginRequest(null);
     setRole(null);
     setShowTeacherLogin(false);
     setShowNamePrompt(false);
@@ -1952,6 +2169,8 @@ export default function ClassroomApp() {
             studentLoginError={studentLoginError}
             setStudentLoginError={setStudentLoginError}
             studentLoginLoading={studentLoginLoading}
+            studentLoginRequest={studentLoginRequest}
+            onCancelStudentWait={cancelStudentLoginWait}
             onTeacher={handleTeacherClick}
             onTeacherLogin={teacherLogin}
             onStudentLogin={studentLogin}
@@ -1975,7 +2194,14 @@ export default function ClassroomApp() {
           )}
 
           {role === "teacher" && (
-            <TeacherView
+            <>
+              <LoginRequestBanner
+                requests={loginRequests}
+                busyId={loginDecideBusy}
+                onApprove={(id) => decideLoginRequest(id, true)}
+                onReject={(id) => decideLoginRequest(id, false)}
+              />
+              <TeacherView
               tab={teacherTab}
               setTab={setTeacherTab}
               lessons={lessons}
@@ -2020,6 +2246,7 @@ export default function ClassroomApp() {
               setStudentImportMsg={setStudentImportMsg}
               studentImportLoading={studentImportLoading}
             />
+            </>
           )}
 
           {role === "student" && (
@@ -2064,6 +2291,8 @@ function RoleSelect({
   studentLoginError,
   setStudentLoginError,
   studentLoginLoading,
+  studentLoginRequest,
+  onCancelStudentWait,
   onTeacher,
   onTeacherLogin,
   onStudentLogin,
@@ -2106,7 +2335,7 @@ function RoleSelect({
           <Users size={28} color="#24478F" />
           <div className="cn-hand text-3xl mt-3" style={{ color: "#24478F" }}>Сурагч</div>
           <p className="text-sm mt-1" style={{ color: "#6B6858" }}>
-            Бүртгэлтэй нэвтрэх нэрээрээ орж хичээл унших, шалгалт өгөх
+            Бүртгэлтэй нэвтрэх нэрээрээ орж, багш зөвшөөрсний дараа хичээл унших, шалгалт өгөх
           </p>
         </button>
       </div>
@@ -2160,7 +2389,37 @@ function RoleSelect({
         </form>
       )}
 
-      {showNamePrompt && (
+      {studentLoginRequest ? (
+        <div className="cn-card rounded-xl p-5 mt-6 w-full max-w-sm text-center">
+          <div className="flex items-center justify-center gap-2 mb-3">
+            <Loader2 size={18} className="animate-spin" color="#24478F" />
+            <span className="font-semibold text-sm" style={{ color: "#24478F" }}>Багшийн зөвшөөрөл</span>
+          </div>
+          {studentLoginError && (
+            <p className="text-xs mb-3 px-2 py-1.5 rounded text-left" style={{ background: "#FBE7E4", color: "#9A3324" }}>
+              {studentLoginError}
+            </p>
+          )}
+          <p className="text-sm font-medium" style={{ color: "#2B2A25" }}>
+            {studentLoginRequest.studentName || studentLoginRequest.username}
+          </p>
+          <p className="text-xs mt-1" style={{ color: "#6B6858" }}>
+            {studentLoginRequest.className ? `${studentLoginRequest.className} анги · ` : ""}
+            @{studentLoginRequest.username}
+          </p>
+          <p className="text-xs mt-3" style={{ color: "#6B6858" }}>
+            Багш зөвшөөрсний дараа автоматаар нэвтэрнэ. Энэ хуудсыг бүү хаагаарай.
+          </p>
+          <button
+            type="button"
+            onClick={onCancelStudentWait}
+            className="w-full text-xs mt-4 underline"
+            style={{ color: "#6B6858" }}
+          >
+            Цуцлах
+          </button>
+        </div>
+      ) : showNamePrompt ? (
         <form onSubmit={onStudentLogin} className="cn-card rounded-xl p-5 mt-6 w-full max-w-sm">
           <div className="flex items-center gap-2 mb-4">
             <LogIn size={18} color="#24478F" />
@@ -2185,7 +2444,7 @@ function RoleSelect({
             spellCheck={false}
           />
           <p className="text-xs mb-4" style={{ color: "#6B6858" }}>
-            Багш бүртгэхэд автоматаар үүссэн нэвтрэх нэрээ оруулна.
+            Нэвтрэх нэрээ оруулсны дараа багш зөвшөөрвөл нэвтэрнэ.
           </p>
           <button
             type="submit"
@@ -2193,7 +2452,7 @@ function RoleSelect({
             className="cn-btn-primary w-full rounded-md py-2 text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2"
           >
             {studentLoginLoading ? <Loader2 size={16} className="animate-spin" /> : null}
-            Нэвтрэх
+            Хүсэлт илгээх
           </button>
           <button
             type="button"
@@ -2208,7 +2467,53 @@ function RoleSelect({
             Буцах
           </button>
         </form>
-      )}
+      ) : null}
+    </div>
+  );
+}
+
+function LoginRequestBanner({ requests, busyId, onApprove, onReject }) {
+  if (!requests?.length) return null;
+  return (
+    <div className="cn-card rounded-xl p-4 mb-5">
+      <div className="flex items-center gap-2 mb-3">
+        <Bell size={18} color="#24478F" />
+        <span className="font-semibold text-sm" style={{ color: "#24478F" }}>
+          Нэвтрэх хүсэлт ({requests.length})
+        </span>
+      </div>
+      <div className="space-y-2 max-h-72 overflow-y-auto">
+        {requests.map((r) => (
+          <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2" style={{ background: "#FFFEFA", border: "1px solid #E3DCC8" }}>
+            <div className="min-w-0">
+              <div className="text-sm font-medium">{r.studentName}</div>
+              <div className="text-xs" style={{ color: "#6B6858" }}>
+                {r.className ? `${r.className} анги · ` : ""}@{r.username}
+                {r.createdAt ? ` · ${fmtDate(r.createdAt)}` : ""}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                disabled={busyId === r.id}
+                onClick={() => onReject(r.id)}
+                className="cn-btn-secondary rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-40"
+              >
+                Татгалзах
+              </button>
+              <button
+                type="button"
+                disabled={busyId === r.id}
+                onClick={() => onApprove(r.id)}
+                className="cn-btn-primary rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-40 flex items-center gap-1"
+              >
+                {busyId === r.id ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                Зөвшөөрөх
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
