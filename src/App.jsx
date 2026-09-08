@@ -256,9 +256,22 @@ function parseQuizFromText(raw) {
       if (idx != null) correct = idx;
     }
 
+    let points = 1;
+    const pointsMatch =
+      block.match(/(?:^|\n)\s*Оноо\s*[:：]\s*(\d+)/im) ||
+      block.match(/(?:^|\n)\s*Points?\s*[:：]\s*(\d+)/im) ||
+      block.match(/\((\d+)\s*оноо\)/i);
+    if (pointsMatch) {
+      const n = Number(pointsMatch[1]);
+      if (Number.isFinite(n) && n > 0) points = Math.min(1000, Math.round(n));
+    }
+
     block = block
       .replace(/\n?\s*Зөв\s*(?:хариулт)?\s*[:：]\s*[АБВГабвгABCDabcd]\s*/gi, "\n")
       .replace(/\n?\s*Correct\s*[:：]\s*[ABCDabcd]\s*/gi, "\n")
+      .replace(/\n?\s*Оноо\s*[:：]\s*\d+\s*/gi, "\n")
+      .replace(/\n?\s*Points?\s*[:：]\s*\d+\s*/gi, "\n")
+      .replace(/\((\d+)\s*оноо\)/gi, "")
       .trim();
 
     const options = ["", "", "", ""];
@@ -285,6 +298,7 @@ function parseQuizFromText(raw) {
       imageUrl: "",
       options: options.map((t) => ({ text: t, imageUrl: "" })),
       correct,
+      points,
     });
   }
 
@@ -347,6 +361,7 @@ function emptyQuestion() {
     imageUrl: "",
     options: [emptyOption(), emptyOption(), emptyOption(), emptyOption()],
     correct: 0,
+    points: 1,
   };
 }
 
@@ -359,6 +374,22 @@ function normalizeOption(o) {
   return { text: o?.text || "", imageUrl: o?.imageUrl || "" };
 }
 
+function questionPoints(q) {
+  const n = Number(q?.points);
+  if (!Number.isFinite(n) || n <= 0) return 1;
+  return Math.min(1000, Math.round(n));
+}
+
+function questionPointsValid(q) {
+  if (q?.points === "" || q?.points === null) return false;
+  const n = Number(q?.points ?? 1);
+  return Number.isFinite(n) && n >= 1 && n <= 1000;
+}
+
+function quizTotalPoints(questions) {
+  return (questions || []).reduce((sum, q) => sum + questionPoints(q), 0);
+}
+
 function normalizeQuestion(q) {
   const options = (q?.options || []).map(normalizeOption);
   while (options.length < 4) options.push(emptyOption());
@@ -367,6 +398,7 @@ function normalizeQuestion(q) {
     imageUrl: q?.imageUrl || "",
     options: options.slice(0, 4),
     correct: typeof q?.correct === "number" ? q.correct : 0,
+    points: questionPoints(q),
   };
 }
 
@@ -416,6 +448,7 @@ function shuffleQuestionOptions(question) {
     ...q,
     options,
     correct: correct >= 0 ? correct : 0,
+    points: questionPoints(q),
   };
 }
 
@@ -717,7 +750,10 @@ export default function ClassroomApp() {
     if (!quizForm.title.trim()) return false;
     if (!(Number(quizForm.durationMinutes) > 0)) return false;
     return quizForm.questions.every(
-      (q) => questionHasContent(q) && normalizeQuestion(q).options.every(optionHasContent)
+      (q) =>
+        questionHasContent(q) &&
+        questionPointsValid(q) &&
+        normalizeQuestion(q).options.every(optionHasContent)
     );
   }
 
@@ -729,6 +765,9 @@ export default function ClassroomApp() {
       const nq = normalizeQuestion(q);
       if (!questionHasContent(nq)) {
         hints.push(`Асуулт ${qi + 1}: текст эсвэл зураг оруулна`);
+      }
+      if (!questionPointsValid(q)) {
+        hints.push(`Асуулт ${qi + 1}: оноо 1–1000 хооронд оруулна`);
       }
       nq.options.forEach((opt, oi) => {
         if (!optionHasContent(opt)) {
@@ -1062,9 +1101,9 @@ export default function ClassroomApp() {
     submittingQuizRef.current = true;
     let score = 0;
     questions.forEach((q, i) => {
-      if (quizAnswers[i] === q.correct) score += 1;
+      if (quizAnswers[i] === q.correct) score += questionPoints(q);
     });
-    const total = questions.length;
+    const total = quizTotalPoints(questions);
     try {
       const { data, error } = await supabase
         .from("attempts")
@@ -2025,7 +2064,7 @@ function QuizBuilder({
     try {
       const { parsed } = await readQuizFromFile(file);
       if (!parsed.questions.length) {
-        setImportMsg("Асуулт олдсонгүй. Загварын форматыг шалгана уу (1. Асуулт / А) Б) В) Г) / Зөв: Б).");
+        setImportMsg("Асуулт олдсонгүй. Загварын форматыг шалгана уу (1. Асуулт / А) Б) В) Г) / Зөв: Б / Оноо: 1).");
         setImportLoading(false);
         return;
       }
@@ -2104,7 +2143,7 @@ function QuizBuilder({
               <span className="text-sm font-semibold" style={{ color: "#24478F" }}>PDF / текстээс оруулах</span>
             </div>
             <p className="text-xs mb-3" style={{ color: "#6B6858" }}>
-              Тогтмол форматтай .pdf эсвэл .txt файл. Загвар татаж аваад Word/PDF болгож болно.
+              Тогтмол форматтай .pdf эсвэл .txt файл. Асуулт бүрт «Оноо: 2» гэж бичиж болно. Загвар татаж аваад Word/PDF болгож болно.
             </p>
             <pre className="text-xs mb-3 p-2 rounded overflow-x-auto" style={{ background: "#FFFEFA", color: "#6B6858", border: "1px solid #E3DCC8" }}>
 {`Гарчиг: Жишээ шалгалт
@@ -2115,7 +2154,8 @@ function QuizBuilder({
 Б) Сонголт 2
 В) Сонголт 3
 Г) Сонголт 4
-Зөв: Б`}
+Зөв: Б
+Оноо: 1`}
             </pre>
             <div className="flex flex-wrap gap-2">
               <a
@@ -2193,11 +2233,28 @@ function QuizBuilder({
                 const nq = normalizeQuestion(q);
                 return (
                   <div key={qi} className="rounded-lg p-3" style={{ background: "#FFFEFA", border: "1px dashed #D8D0BA" }}>
-                    <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center justify-between mb-2 gap-2">
                       <span className="text-xs font-semibold" style={{ color: "#24478F" }}>Асуулт {qi + 1}</span>
-                      <button onClick={() => removeQuestionFromForm(qi)} disabled={quizForm.questions.length <= 1} style={{ color: "#9A3324" }} className="disabled:opacity-30">
-                        <Trash2 size={14} />
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-1.5 text-xs shrink-0" style={{ color: "#6B6858" }}>
+                          Оноо
+                          <input
+                            type="number"
+                            min={1}
+                            max={1000}
+                            step={1}
+                            className="cn-input w-16 px-2 py-1 text-sm"
+                            value={q.points === "" || q.points === null ? "" : (q.points ?? nq.points)}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              updateQuestion(qi, "points", v === "" ? "" : Number(v));
+                            }}
+                          />
+                        </label>
+                        <button onClick={() => removeQuestionFromForm(qi)} disabled={quizForm.questions.length <= 1} style={{ color: "#9A3324" }} className="disabled:opacity-30">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
                     <input
                       className="cn-input w-full px-3 py-2 text-sm mb-2"
@@ -2250,6 +2307,9 @@ function QuizBuilder({
             </div>
 
             <div className="mt-4">
+              <div className="text-xs mb-3" style={{ color: "#6B6858" }}>
+                Нийт оноо: <span className="font-semibold" style={{ color: "#24478F" }}>{quizTotalPoints(quizForm.questions)}</span>
+              </div>
               <div className="flex flex-wrap items-center gap-3">
                 <button onClick={addQuestionToForm} className="cn-btn-secondary rounded-md px-3 py-1.5 text-sm flex items-center gap-1.5">
                   <Plus size={14} /> Асуулт нэмэх
@@ -2276,7 +2336,7 @@ function QuizBuilder({
                     {quizFormMissingHints.length > 8 ? <li>… болон бусад</li> : null}
                   </ul>
                   <p className="mt-2" style={{ color: "#6B6858" }}>
-                    Асуулт бүрт А, Б, В, Г <strong>дөрвөн сонголт</strong> бүгд текст эсвэл зурагтай байх ёстой.
+                    Асуулт бүрт А, Б, В, Г <strong>дөрвөн сонголт</strong> бүгд текст эсвэл зурагтай байх ёстой. Асуулт бүрт оноо өгнө.
                   </p>
                 </div>
               )}
@@ -2297,6 +2357,7 @@ function QuizBuilder({
                 <span className="text-sm font-medium">{q.title}</span>
                 <div className="text-xs mt-1.5 flex flex-wrap gap-x-3 gap-y-1" style={{ color: "#6B6858" }}>
                   <span>{q.questions.length} асуулт</span>
+                  <span>{quizTotalPoints(q.questions)} оноо</span>
                   <span className="inline-flex items-center gap-1"><Clock size={12} /> {q.durationMinutes} мин</span>
                   <span style={{ color: q.isOpen ? "#2F6F4E" : "#9A3324" }}>
                     {q.isOpen ? "Нээлттэй (сурагч өгч болно)" : "Хаалттай"}
@@ -2471,6 +2532,7 @@ function QuizList({ setTab, quizzes, setActiveQuiz, setQuizAnswers, studentUsern
                 <div className="font-semibold mt-2">{q.title}</div>
                 <div className="text-xs mt-1 flex flex-wrap gap-x-3" style={{ color: "#6B6858" }}>
                   <span>{q.questions.length} асуулт</span>
+                  <span>{quizTotalPoints(q.questions)} оноо</span>
                   <span className="inline-flex items-center gap-1"><Clock size={12} /> {q.durationMinutes || 30} мин</span>
                 </div>
                 {!open && (
@@ -2559,14 +2621,22 @@ function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz,
 
       <BackRow onBack={() => setTab("quizzes")} title={activeQuiz.title} />
       <p className="text-xs mb-4" style={{ color: "#6B6858" }}>
-        Нийт хугацаа: {durationMinutes} минут. Цаг дуусмагц автоматаар илгээнэ.
+        Нийт хугацаа: {durationMinutes} минут. Нийт {quizTotalPoints(questions)} оноо. Цаг дуусмагц автоматаар илгээнэ.
         Асуулт болон хариултын дараалал сурагч бүрт өөр байна.
       </p>
       <div className="space-y-4">
         {questions.map((q, qi) => (
           <div key={qi} className="cn-card rounded-xl p-4">
-            <div className="text-sm font-semibold mb-2">
-              {qi + 1}. {q.text || (q.imageUrl ? "Зургийг харна уу" : "")}
+            <div className="flex items-start justify-between gap-3 mb-2">
+              <div className="text-sm font-semibold">
+                {qi + 1}. {q.text || (q.imageUrl ? "Зургийг харна уу" : "")}
+              </div>
+              <span
+                className="shrink-0 text-xs font-semibold px-2 py-0.5 rounded"
+                style={{ background: "#EAEFF8", color: "#24478F" }}
+              >
+                {questionPoints(q)} оноо
+              </span>
             </div>
             {q.imageUrl ? (
               <img
@@ -2626,7 +2696,7 @@ function QuizResultView({ setTab, quizResult, activeQuiz }) {
     <div className="flex flex-col items-center justify-center py-10">
       <div className="cn-stamp w-40 h-40 flex flex-col items-center justify-center" style={{ color }}>
         <span className="cn-hand text-4xl">{pct}%</span>
-        <span className="text-xs font-semibold mt-1">{quizResult.score}/{quizResult.total}</span>
+        <span className="text-xs font-semibold mt-1">{quizResult.score}/{quizResult.total} оноо</span>
       </div>
       <p className="mt-6 text-sm text-center" style={{ color: "#6B6858" }}>
         {quizResult.timedOut ? "Хугацаа дууссан тул шалгалт автоматаар илгээгдлээ. " : ""}
