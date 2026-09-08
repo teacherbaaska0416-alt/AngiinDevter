@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, Fragment } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   GraduationCap,
   Users,
@@ -23,7 +23,6 @@ import {
   Clock,
   Lock,
   Unlock,
-  ChevronDown,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
@@ -431,7 +430,9 @@ function quizVisibleToStudent(quiz, session) {
 
 function normalizeOption(o) {
   if (typeof o === "string") return { text: o, imageUrl: "" };
-  return { text: o?.text || "", imageUrl: o?.imageUrl || "" };
+  const opt = { text: o?.text || "", imageUrl: o?.imageUrl || "" };
+  if (typeof o?.originalOptionIndex === "number") opt.originalOptionIndex = o.originalOptionIndex;
+  return opt;
 }
 
 function questionPoints(q) {
@@ -457,8 +458,53 @@ function optionPreview(opt) {
   return "";
 }
 
+function questionFingerprint(q) {
+  const nq = normalizeQuestion(q);
+  return `${nq.text || ""}\n${nq.imageUrl || ""}`;
+}
+
+function optionFingerprint(opt) {
+  const o = normalizeOption(opt);
+  return `${o.text || ""}\n${o.imageUrl || ""}`;
+}
+
+function teacherOptionIndex(nq, shuffledIndex) {
+  const opt = nq?.options?.[shuffledIndex];
+  if (typeof opt?.originalOptionIndex === "number") return opt.originalOptionIndex;
+  return shuffledIndex;
+}
+
+function attachOriginalOrder(shuffledQuestions, originalQuestions) {
+  const orig = (originalQuestions || []).map((q) => normalizeQuestion(q));
+  const used = new Set();
+  return (shuffledQuestions || []).map((q, i) => {
+    const nq = normalizeQuestion(q);
+    let originalIndex = typeof nq.originalIndex === "number" ? nq.originalIndex : null;
+    if (originalIndex == null || originalIndex < 0 || originalIndex >= orig.length) {
+      const fp = questionFingerprint(nq);
+      const idx = orig.findIndex((oq, oi) => !used.has(oi) && questionFingerprint(oq) === fp);
+      originalIndex = idx >= 0 ? idx : i;
+    }
+    if (originalIndex >= 0 && originalIndex < orig.length) used.add(originalIndex);
+    const source = orig[originalIndex] || orig[i];
+    const options = nq.options.map((opt) => {
+      if (typeof opt.originalOptionIndex === "number") return opt;
+      const oi = source ? source.options.findIndex((oo) => optionFingerprint(oo) === optionFingerprint(opt)) : -1;
+      return oi >= 0 ? { ...opt, originalOptionIndex: oi } : opt;
+    });
+    return {
+      ...nq,
+      options,
+      originalIndex,
+      originalCorrect: typeof nq.originalCorrect === "number"
+        ? nq.originalCorrect
+        : (source ? source.correct : nq.correct),
+    };
+  });
+}
+
 function buildAttemptDetails(questions, quizAnswers) {
-  return (questions || []).map((q, i) => {
+  const details = (questions || []).map((q, i) => {
     const nq = normalizeQuestion(q);
     const pts = questionPoints(nq);
     const chosen = quizAnswers?.[i];
@@ -466,6 +512,9 @@ function buildAttemptDetails(questions, quizAnswers) {
     const isCorrect = !unanswered && chosen === nq.correct;
     const chosenOpt = !unanswered ? nq.options[chosen] : null;
     const correctOpt = nq.options[nq.correct];
+    const chosenOrig = unanswered ? null : teacherOptionIndex(nq, chosen);
+    const correctOrig = typeof nq.originalCorrect === "number" ? nq.originalCorrect : teacherOptionIndex(nq, nq.correct);
+    const originalIndex = typeof nq.originalIndex === "number" ? nq.originalIndex : i;
     return {
       text: nq.text,
       imageUrl: nq.imageUrl,
@@ -473,14 +522,217 @@ function buildAttemptDetails(questions, quizAnswers) {
       earned: isCorrect ? pts : 0,
       isCorrect,
       unanswered,
-      chosenLabel: !unanswered && LETTERS[chosen] ? LETTERS[chosen] : "",
+      originalIndex,
+      chosenLabel: chosenOrig != null && LETTERS[chosenOrig] ? LETTERS[chosenOrig] : "",
       chosenText: chosenOpt ? optionPreview(chosenOpt) : "",
       chosenImageUrl: chosenOpt?.imageUrl || "",
-      correctLabel: LETTERS[nq.correct] || "",
+      correctLabel: LETTERS[correctOrig] || "",
       correctText: correctOpt ? optionPreview(correctOpt) : "",
       correctImageUrl: correctOpt?.imageUrl || "",
     };
   });
+  return details.sort((a, b) => a.originalIndex - b.originalIndex);
+}
+
+function letterFromQuizOption(question, text, imageUrl) {
+  if (!question) return "";
+  const nq = normalizeQuestion(question);
+  const idx = nq.options.findIndex((o) => {
+    const preview = optionPreview(o);
+    if (text && preview === text) return true;
+    if (imageUrl && o.imageUrl && o.imageUrl === imageUrl) return true;
+    return false;
+  });
+  return idx >= 0 ? LETTERS[idx] : "";
+}
+
+function orderDetailsForTeacher(details, quiz) {
+  const list = normalizeAttemptDetails(details);
+  if (!list.length) return list;
+  const questions = quiz?.questions || [];
+  const used = new Set();
+  const mapped = list.map((d, i) => {
+    let originalIndex = typeof d.originalIndex === "number" ? d.originalIndex : null;
+    if ((originalIndex == null || originalIndex < 0) && questions.length) {
+      const idx = questions.findIndex((q, qi) => {
+        if (used.has(qi)) return false;
+        const nq = normalizeQuestion(q);
+        return (nq.text || "") === (d.text || "") && (nq.imageUrl || "") === (d.imageUrl || "");
+      });
+      if (idx >= 0) originalIndex = idx;
+    }
+    if (originalIndex != null && originalIndex >= 0) used.add(originalIndex);
+    const source = originalIndex != null ? questions[originalIndex] : null;
+    return {
+      ...d,
+      originalIndex: originalIndex == null ? 1000 + i : originalIndex,
+      chosenLabel: d.unanswered ? "" : (letterFromQuizOption(source, d.chosenText, d.chosenImageUrl) || d.chosenLabel),
+      correctLabel: letterFromQuizOption(source, d.correctText, d.correctImageUrl) || d.correctLabel,
+    };
+  });
+  return mapped.sort((a, b) => a.originalIndex - b.originalIndex);
+}
+
+const PERFORMANCE_LEVELS = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII"];
+
+function performanceLevel(pct) {
+  if (pct >= 90) return "VIII";
+  if (pct >= 80) return "VII";
+  if (pct >= 70) return "VI";
+  if (pct >= 60) return "V";
+  if (pct >= 50) return "IV";
+  if (pct >= 40) return "III";
+  if (pct >= 20) return "II";
+  return "I";
+}
+
+function detailQuestionIndex(d, fallback) {
+  if (typeof d?.originalIndex === "number" && d.originalIndex >= 0 && d.originalIndex < 1000) return d.originalIndex;
+  return fallback;
+}
+
+function quizQuestionColumns(quiz, attempts) {
+  if (quiz?.questions?.length) {
+    return quiz.questions.map((q, i) => {
+      const nq = normalizeQuestion(q);
+      return { index: i, points: questionPoints(nq), text: nq.text || "" };
+    });
+  }
+  let max = 0;
+  const pointsByIndex = {};
+  (attempts || []).forEach((a) => {
+    const details = orderDetailsForTeacher(a.details, quiz);
+    details.forEach((d, i) => {
+      const idx = detailQuestionIndex(d, i);
+      max = Math.max(max, idx + 1);
+      if (pointsByIndex[idx] == null) pointsByIndex[idx] = d.points;
+    });
+  });
+  return Array.from({ length: max }, (_, i) => ({
+    index: i,
+    points: pointsByIndex[i] || 1,
+    text: "",
+  }));
+}
+
+function earnedByQuestion(attempt, columns, quiz) {
+  const details = orderDetailsForTeacher(attempt?.details, quiz);
+  if (!details.length) return columns.map(() => null);
+  const map = {};
+  details.forEach((d, i) => {
+    map[detailQuestionIndex(d, i)] = d.earned;
+  });
+  return columns.map((c) => (c.index in map ? map[c.index] : 0));
+}
+
+function quizBelongsToClass(quiz, cls) {
+  if (!quiz || !cls) return false;
+  if (quiz.classId && quiz.classId === cls.id) return true;
+  if (quiz.forGrade && quiz.grade != null && Number(quiz.grade) === Number(cls.grade)) return true;
+  return false;
+}
+
+function studentNamesInClass(students, classId) {
+  return new Set((students || []).filter((s) => s.classId === classId).map((s) => s.name));
+}
+
+function attemptsForClass(attempts, students, classId) {
+  const names = studentNamesInClass(students, classId);
+  return (attempts || []).filter((a) => names.has(a.studentName));
+}
+
+function makeQuizAnalysisGroup(quiz, attempts, students) {
+  const related = (attempts || []).filter(
+    (a) =>
+      (quiz?.id && !String(quiz.id).startsWith("title:") && a.quizId === quiz.id) ||
+      a.quizTitle === quiz?.title
+  );
+  const grouped = groupAttemptsByQuiz(related, quiz ? [quiz] : [], students);
+  if (grouped[0]) return grouped[0];
+  return {
+    key: quiz?.id || `title:${quiz?.title || "unknown"}`,
+    quizId: quiz?.id,
+    quizTitle: quiz?.title || "Шалгалт",
+    subject: quiz?.subject || "",
+    quiz: quiz || null,
+    attempts: [],
+    rows: [],
+    columns: quizQuestionColumns(quiz, []),
+  };
+}
+
+function groupAttemptsByQuiz(attempts, quizzes, students) {
+  const map = new Map();
+  (attempts || []).forEach((a) => {
+    const key = a.quizId || `title:${a.quizTitle}`;
+    if (!map.has(key)) {
+      const quiz = quizzes.find((q) => q.id === a.quizId) || null;
+      map.set(key, {
+        key,
+        quizId: a.quizId,
+        quizTitle: a.quizTitle,
+        subject: a.subject,
+        quiz,
+        attempts: [],
+      });
+    }
+    map.get(key).attempts.push(a);
+  });
+  return [...map.values()].map((g) => {
+    const latest = new Map();
+    [...g.attempts].sort((a, b) => b.date - a.date).forEach((a) => {
+      if (!latest.has(a.studentName)) latest.set(a.studentName, a);
+    });
+    const rows = [...latest.values()].sort((a, b) => {
+      const sa = (students || []).find((s) => s.name === a.studentName);
+      const sb = (students || []).find((s) => s.name === b.studentName);
+      if (sa?.studentNo != null && sb?.studentNo != null) return sa.studentNo - sb.studentNo;
+      return String(a.studentName).localeCompare(String(b.studentName), "mn");
+    });
+    const columns = quizQuestionColumns(g.quiz, g.attempts);
+    return { ...g, rows, columns };
+  });
+}
+
+function exportQuizGradebook(group) {
+  const cols = group.columns;
+  const header1 = ["№", "Сурагчийн нэр", ...cols.map((c) => c.index + 1), "авах", "авсан", "Гүйцэтгэл", "Түвшин"];
+  const header2 = ["", "Даалгаврын оноо", ...cols.map((c) => c.points), "", "", "", ""];
+  const body = group.rows.map((a, i) => {
+    const earned = earnedByQuestion(a, cols, group.quiz);
+    const hasCells = earned.some((v) => v != null);
+    const max = cols.reduce((s, c) => s + c.points, 0) || a.total || 0;
+    const got = hasCells ? earned.reduce((s, v) => s + (Number(v) || 0), 0) : a.score;
+    const pct = max > 0 ? (got / max) * 100 : 0;
+    return [i + 1, a.studentName, ...earned.map((v) => (v == null ? "" : v)), max, got, Number(pct.toFixed(1)), performanceLevel(pct)];
+  });
+  const n = group.rows.length;
+  const colPossible = cols.map((c) => c.points * n);
+  const colEarned = cols.map((c, ci) =>
+    group.rows.reduce((s, a) => {
+      const earned = earnedByQuestion(a, cols, group.quiz);
+      return s + (Number(earned[ci]) || 0);
+    }, 0)
+  );
+  const totalPossibleAll = body.reduce((s, r) => s + (Number(r[2 + cols.length]) || 0), 0);
+  const totalEarnedAll = body.reduce((s, r) => s + (Number(r[3 + cols.length]) || 0), 0);
+  const overallPct = totalPossibleAll > 0 ? Number(((totalEarnedAll / totalPossibleAll) * 100).toFixed(1)) : 0;
+  const footer1 = ["", "Авах оноо", ...colPossible, totalPossibleAll, "", "", ""];
+  const footer2 = ["", "Авсан оноо", ...colEarned, "", totalEarnedAll, "", ""];
+  const footer3 = [
+    "",
+    "Гүйцэтгэл",
+    ...colPossible.map((p, i) => (p > 0 ? Number(((colEarned[i] / p) * 100).toFixed(1)) : 0)),
+    "",
+    "",
+    overallPct,
+    "",
+  ];
+  const ws = XLSX.utils.aoa_to_sheet([header1, header2, ...body, footer1, footer2, footer3]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Үр дүн");
+  const name = `${slugifyMn(group.quizTitle || "shalgaltt")}-ur-dun.xlsx`;
+  XLSX.writeFile(wb, name);
 }
 
 function normalizeAttemptDetails(details) {
@@ -492,6 +744,7 @@ function normalizeAttemptDetails(details) {
     earned: Number.isFinite(Number(d?.earned)) ? Math.max(0, Number(d.earned)) : 0,
     isCorrect: Boolean(d?.isCorrect),
     unanswered: Boolean(d?.unanswered),
+    originalIndex: typeof d?.originalIndex === "number" ? d.originalIndex : null,
     chosenLabel: d?.chosenLabel || "",
     chosenText: d?.chosenText || "",
     chosenImageUrl: d?.chosenImageUrl || "",
@@ -504,12 +757,30 @@ function normalizeAttemptDetails(details) {
 function normalizeQuestion(q) {
   const options = (q?.options || []).map(normalizeOption);
   while (options.length < 4) options.push(emptyOption());
-  return {
+  const nq = {
     text: q?.text || "",
     imageUrl: q?.imageUrl || "",
     options: options.slice(0, 4),
     correct: typeof q?.correct === "number" ? q.correct : 0,
     points: questionPoints(q),
+  };
+  if (typeof q?.originalIndex === "number") nq.originalIndex = q.originalIndex;
+  if (typeof q?.originalCorrect === "number") nq.originalCorrect = q.originalCorrect;
+  return nq;
+}
+
+function mapQuiz(q) {
+  return {
+    id: q.id,
+    title: q.title,
+    subject: q.subject,
+    questions: (q.questions || []).map(normalizeQuestion),
+    durationMinutes: Number(q.duration_minutes) > 0 ? Number(q.duration_minutes) : 30,
+    isOpen: Boolean(q.is_open),
+    classId: q.class_id || "",
+    grade: q.grade != null && q.grade !== "" ? Number(q.grade) : null,
+    forGrade: Boolean(q.for_grade),
+    createdAt: new Date(q.created_at).getTime(),
   };
 }
 
@@ -550,13 +821,20 @@ function shuffleArray(items) {
 }
 
 /** Сонголтуудыг хольж, зөв хариултын индексийг шинэ байрлалд нь тааруулна */
-function shuffleQuestionOptions(question) {
+function shuffleQuestionOptions(question, originalIndex) {
   const q = normalizeQuestion(question);
+  const origIdx = typeof q.originalIndex === "number" ? q.originalIndex : originalIndex;
+  const originalCorrect = typeof q.originalCorrect === "number" ? q.originalCorrect : q.correct;
   const order = shuffleArray(q.options.map((_, i) => i));
-  const options = order.map((i) => q.options[i]);
+  const options = order.map((src) => ({
+    ...q.options[src],
+    originalOptionIndex: typeof q.options[src].originalOptionIndex === "number" ? q.options[src].originalOptionIndex : src,
+  }));
   const correct = order.indexOf(q.correct);
   return {
     ...q,
+    originalIndex: origIdx,
+    originalCorrect,
     options,
     correct: correct >= 0 ? correct : 0,
     points: questionPoints(q),
@@ -565,9 +843,10 @@ function shuffleQuestionOptions(question) {
 
 /** Асуулт болон хариултын байрлалыг сурагчид зориулж рандом болгоно */
 function shuffleQuizForStudent(quiz) {
+  const questions = (quiz.questions || []).map((q, i) => shuffleQuestionOptions(q, i));
   return {
     ...quiz,
-    questions: shuffleArray((quiz.questions || []).map(shuffleQuestionOptions)),
+    questions: shuffleArray(questions),
   };
 }
 
@@ -579,7 +858,8 @@ function loadOrCreateStudentQuiz(quiz, username) {
     if (raw) {
       const saved = JSON.parse(raw);
       if (Array.isArray(saved?.questions) && saved.questions.length === expectedLen) {
-        return { ...quiz, questions: saved.questions.map(normalizeQuestion) };
+        const restored = attachOriginalOrder(saved.questions, quiz.questions);
+        return { ...quiz, questions: restored };
       }
     }
   } catch {
@@ -646,18 +926,6 @@ export default function ClassroomApp() {
   const [classForm, setClassForm] = useState({ grade: 7, section: "А" });
 
   const mapLesson = (l) => ({ id: l.id, title: l.title, subject: l.subject, content: l.content, createdAt: new Date(l.created_at).getTime() });
-  const mapQuiz = (q) => ({
-    id: q.id,
-    title: q.title,
-    subject: q.subject,
-    questions: (q.questions || []).map(normalizeQuestion),
-    durationMinutes: Number(q.duration_minutes) > 0 ? Number(q.duration_minutes) : 30,
-    isOpen: Boolean(q.is_open),
-    classId: q.class_id || "",
-    grade: q.grade != null && q.grade !== "" ? Number(q.grade) : null,
-    forGrade: Boolean(q.for_grade),
-    createdAt: new Date(q.created_at).getTime(),
-  });
   const mapClass = (c) => ({
     id: c.id,
     name: c.name,
@@ -732,6 +1000,107 @@ export default function ClassroomApp() {
   useEffect(() => {
     loadAll();
   }, [loadAll]);
+
+  useEffect(() => {
+    if (!supabase) return undefined;
+
+    let cancelled = false;
+    let fetchingFull = false;
+
+    const refreshQuizzesSilent = async () => {
+      if (fetchingFull) return;
+      fetchingFull = true;
+      try {
+        const { data, error } = await supabase
+          .from("quizzes")
+          .select("*")
+          .order("created_at", { ascending: false });
+        if (cancelled || error || !data) return;
+        setQuizzes(data.map(mapQuiz));
+      } finally {
+        fetchingFull = false;
+      }
+    };
+
+    const refreshOpenFlags = async () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      const { data, error } = await supabase.from("quizzes").select("id, is_open");
+      if (cancelled || error || !data) return;
+      let needFull = false;
+      setQuizzes((list) => {
+        const known = new Set(list.map((q) => q.id));
+        const incoming = new Set(data.map((r) => r.id));
+        if (
+          known.size !== incoming.size ||
+          data.some((r) => !known.has(r.id)) ||
+          list.some((q) => !incoming.has(q.id))
+        ) {
+          needFull = true;
+          return list;
+        }
+        let changed = false;
+        const next = list.map((q) => {
+          const row = data.find((r) => r.id === q.id);
+          const isOpen = Boolean(row?.is_open);
+          if (q.isOpen === isOpen) return q;
+          changed = true;
+          return { ...q, isOpen };
+        });
+        return changed ? next : list;
+      });
+      if (needFull) await refreshQuizzesSilent();
+    };
+
+    const applyOpen = (row) => {
+      if (!row?.id) return;
+      setQuizzes((list) => {
+        const i = list.findIndex((q) => q.id === row.id);
+        if (i === -1) {
+          return row.title != null ? [mapQuiz(row), ...list] : list;
+        }
+        if (typeof row.is_open !== "boolean" || list[i].isOpen === Boolean(row.is_open)) return list;
+        const next = list.slice();
+        next[i] = { ...list[i], isOpen: Boolean(row.is_open) };
+        return next;
+      });
+    };
+
+    const channel = supabase
+      .channel("quizzes-live")
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "quizzes" }, (payload) => {
+        applyOpen(payload.new);
+      })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "quizzes" }, (payload) => {
+        if (payload.new?.id) setQuizzes((list) => [mapQuiz(payload.new), ...list.filter((q) => q.id !== payload.new.id)]);
+      })
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "quizzes" }, (payload) => {
+        const id = payload.old?.id;
+        if (id) setQuizzes((list) => list.filter((q) => q.id !== id));
+      })
+      .subscribe();
+
+    const pollId = setInterval(refreshOpenFlags, 2000);
+    refreshOpenFlags();
+    const onVis = () => {
+      if (document.visibilityState === "visible") refreshOpenFlags();
+    };
+    document.addEventListener("visibilitychange", onVis);
+
+    return () => {
+      cancelled = true;
+      clearInterval(pollId);
+      document.removeEventListener("visibilitychange", onVis);
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activeQuiz?.id) return;
+    const live = quizzes.find((q) => q.id === activeQuiz.id);
+    if (!live) return;
+    if (live.isOpen === activeQuiz.isOpen) return;
+    setActiveQuiz((prev) => (prev && prev.id === live.id ? { ...prev, isOpen: live.isOpen } : prev));
+  }, [quizzes, activeQuiz?.id, activeQuiz?.isOpen]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -959,7 +1328,16 @@ export default function ClassroomApp() {
 
   async function saveQuiz() {
     if (!quizFormValid()) return false;
-    const questions = quizForm.questions.map(normalizeQuestion);
+    const questions = quizForm.questions.map((q) => {
+      const nq = normalizeQuestion(q);
+      return {
+        text: nq.text,
+        imageUrl: nq.imageUrl,
+        options: nq.options.map((o) => ({ text: o.text, imageUrl: o.imageUrl })),
+        correct: nq.correct,
+        points: nq.points,
+      };
+    });
     const durationMinutes = Math.max(1, Math.round(Number(quizForm.durationMinutes) || 30));
     const selectedClass = classes.find((c) => c.id === quizForm.classId) || null;
     const grade = selectedClass
@@ -1060,6 +1438,22 @@ export default function ClassroomApp() {
       return;
     }
     setQuizzes((list) => list.map((q) => (q.id === id ? mapQuiz(data) : q)));
+  }
+
+  async function startStudentQuiz(quiz) {
+    if (!quiz?.id) return;
+    let isOpen = Boolean(quiz.isOpen);
+    if (supabase) {
+      const { data } = await supabase.from("quizzes").select("is_open").eq("id", quiz.id).maybeSingle();
+      if (data) {
+        isOpen = Boolean(data.is_open);
+        setQuizzes((list) => list.map((q) => (q.id === quiz.id ? { ...q, isOpen } : q)));
+      }
+    }
+    if (!isOpen) return;
+    setActiveQuiz(loadOrCreateStudentQuiz({ ...quiz, isOpen: true }, studentSession?.username));
+    setQuizAnswers({});
+    setStudentTab("quiz");
   }
 
   async function addClass() {
@@ -1240,7 +1634,11 @@ export default function ClassroomApp() {
     if (!activeQuiz || submittingQuizRef.current) return;
     if (studentSession && !quizVisibleToStudent(activeQuiz, studentSession)) return;
     const force = opts.force === true;
-    const questions = (activeQuiz.questions || []).map(normalizeQuestion);
+    const sourceQuiz = quizzes.find((q) => q.id === activeQuiz.id);
+    const questions = attachOriginalOrder(
+      (activeQuiz.questions || []).map(normalizeQuestion),
+      sourceQuiz?.questions || activeQuiz.questions
+    );
     if (!force && !questions.every((_, i) => quizAnswers[i] !== undefined)) return;
 
     submittingQuizRef.current = true;
@@ -1276,7 +1674,7 @@ export default function ClassroomApp() {
       } catch {
         // ignore
       }
-      setQuizResult({ score, total, timedOut: force });
+      setQuizResult({ score, total, timedOut: force && !opts.closed, closed: opts.closed === true });
       setStudentTab("quiz-result");
     } finally {
       submittingQuizRef.current = false;
@@ -1323,6 +1721,8 @@ export default function ClassroomApp() {
       setNameInput("");
       setShowNamePrompt(false);
       setRole("student");
+      const { data: quizRows } = await supabase.from("quizzes").select("*").order("created_at", { ascending: false });
+      if (quizRows) setQuizzes(quizRows.map(mapQuiz));
     } catch {
       setStudentLoginError("Нэвтрэхэд алдаа гарлаа. Дахин оролдоно уу.");
     }
@@ -1421,6 +1821,107 @@ export default function ClassroomApp() {
           border-radius: 9999px;
           transform: rotate(-7deg);
         }
+        .cn-grade {
+          border-collapse: separate;
+          border-spacing: 0;
+          font-size: 13px;
+          width: 100%;
+        }
+        .cn-grade th, .cn-grade td {
+          border-bottom: 1px solid #E3DCC8;
+          padding: 10px 8px;
+          white-space: nowrap;
+        }
+        .cn-grade thead tr:first-child th {
+          background: #EAEFF8;
+          color: #24478F;
+          font-size: 11px;
+          font-weight: 600;
+        }
+        .cn-grade thead tr:last-child th {
+          background: #FBF9F2;
+          color: #6B6858;
+          font-size: 11px;
+          font-weight: 600;
+          border-bottom: 1.5px solid #C9D4EA;
+        }
+        .cn-grade .cn-sticky-num {
+          position: sticky;
+          left: 0;
+          z-index: 2;
+          min-width: 44px;
+        }
+        .cn-grade .cn-sticky-name {
+          position: sticky;
+          left: 44px;
+          z-index: 2;
+          min-width: 168px;
+          box-shadow: 6px 0 10px -8px rgba(36,71,143,0.22);
+        }
+        .cn-grade thead .cn-sticky-num,
+        .cn-grade thead .cn-sticky-name {
+          z-index: 4;
+        }
+        .cn-grade tbody tr td {
+          background: #FFFEFA;
+        }
+        .cn-grade tbody tr:nth-child(even) td {
+          background: #FBF9F2;
+        }
+        .cn-grade tbody tr:hover td,
+        .cn-grade tbody tr.cn-grade-open td {
+          background: #EAEFF8;
+        }
+        .cn-grade tfoot td {
+          background: #EAEFF8;
+          color: #24478F;
+          font-weight: 600;
+          border-bottom: 1px solid #C9D4EA;
+        }
+        .cn-grade tfoot tr:last-child td {
+          border-bottom: none;
+        }
+        .cn-grade .cn-sep {
+          border-left: 1.5px solid #C9D4EA;
+        }
+        .cn-qnum {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 1.5rem;
+          height: 1.5rem;
+          padding: 0 5px;
+          border-radius: 999px;
+          background: #E5EAF5;
+          color: #24478F;
+          font-size: 11px;
+          font-weight: 700;
+        }
+        .cn-score {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 1.6rem;
+          height: 1.45rem;
+          padding: 0 6px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: 600;
+        }
+        .cn-score-ok { background: #E4F0E9; color: #2F6F4E; }
+        .cn-score-bad { background: #FBE7E4; color: #9A3324; }
+        .cn-score-mid { background: #EAEFF8; color: #24478F; }
+        .cn-level {
+          display: inline-block;
+          min-width: 2rem;
+          padding: 2px 8px;
+          border-radius: 999px;
+          background: #E5EAF5;
+          color: #24478F;
+          font-size: 11px;
+          font-weight: 700;
+          text-align: center;
+        }
       `}</style>
 
       {loading ? (
@@ -1457,7 +1958,7 @@ export default function ClassroomApp() {
           />
         </>
       ) : (
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
+        <div className={"mx-auto px-4 sm:px-6 py-6 " + (role === "teacher" && teacherTab === "results" ? "max-w-[1800px]" : "max-w-5xl")}>
           <TopBar
             role={role}
             studentName={studentName}
@@ -1536,6 +2037,7 @@ export default function ClassroomApp() {
               setQuizAnswers={setQuizAnswers}
               quizResult={quizResult}
               submitQuiz={submitQuiz}
+              startStudentQuiz={startStudentQuiz}
               studentUsername={studentSession?.username || ""}
               studentSession={studentSession}
             />
@@ -2626,11 +3128,12 @@ function AttemptBreakdown({ details }) {
       {details.map((d, i) => {
         const color = d.unanswered ? "#8A5A00" : d.isCorrect ? "#2F6F4E" : "#9A3324";
         const bg = d.unanswered ? "#FFF6E8" : d.isCorrect ? "#E4F0E9" : "#FBE7E4";
+        const num = typeof d.originalIndex === "number" && d.originalIndex < 1000 ? d.originalIndex + 1 : i + 1;
         return (
-          <div key={i} className="rounded-md p-3" style={{ background: "#FFFEFA", border: "1px solid #E3DCC8" }}>
+          <div key={`${d.originalIndex ?? i}-${i}`} className="rounded-md p-3" style={{ background: "#FFFEFA", border: "1px solid #E3DCC8" }}>
             <div className="flex flex-wrap items-start justify-between gap-2 mb-1">
               <div className="text-sm font-medium min-w-0">
-                {i + 1}. {d.text || (d.imageUrl ? "Зургийг харна уу" : "Асуулт")}
+                {num}. {d.text || (d.imageUrl ? "Зургийг харна уу" : "Асуулт")}
               </div>
               <span
                 className="shrink-0 text-xs font-semibold px-2 py-0.5 rounded inline-flex items-center gap-1"
@@ -2675,73 +3178,388 @@ function AttemptBreakdown({ details }) {
   );
 }
 
-function ResultsTable({ setTab, attempts }) {
-  const [openId, setOpenId] = useState(null);
+function QuizAnalysisView({ group, openKey, setOpenKey }) {
+  const cols = group.columns;
+  const n = group.rows.length;
+  const colPossible = cols.map((c) => c.points * n);
+  const colEarned = cols.map((c, ci) =>
+    group.rows.reduce((s, a) => s + (Number(earnedByQuestion(a, cols, group.quiz)[ci]) || 0), 0)
+  );
+  const levelCounts = Object.fromEntries(PERFORMANCE_LEVELS.map((L) => [L, 0]));
+  const rowData = group.rows.map((a, i) => {
+    const earned = earnedByQuestion(a, cols, group.quiz);
+    const hasCells = earned.some((v) => v != null);
+    const max = cols.reduce((s, c) => s + c.points, 0) || a.total || 0;
+    const got = hasCells ? earned.reduce((s, v) => s + (Number(v) || 0), 0) : a.score;
+    const pct = max > 0 ? (got / max) * 100 : 0;
+    const level = performanceLevel(pct);
+    levelCounts[level] += 1;
+    return { a, i, earned, hasCells, max, got, pct, level };
+  });
+  const totalPossibleAll = rowData.reduce((s, r) => s + r.max, 0);
+  const totalEarnedAll = rowData.reduce((s, r) => s + r.got, 0);
+  const overallPct = totalPossibleAll > 0 ? (totalEarnedAll / totalPossibleAll) * 100 : 0;
+
   return (
     <div>
-      <BackRow onBack={() => setTab("home")} title="Сурагчдын үр дүн" />
-      {attempts.length === 0 ? (
-        <EmptyState text="Одоогоор шалгалт өгсөн сурагч алга." />
+      <div className="cn-card rounded-xl p-4 mb-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <span className="cn-tag mr-2">{group.subject}</span>
+            <span className="text-base font-semibold" style={{ color: "#2B2A25" }}>{group.quizTitle}</span>
+            <p className="text-xs mt-1.5" style={{ color: "#6B6858" }}>
+              {n} сурагч · {cols.length} даалгавар · мөр дээр дарж хариуг харна
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => exportQuizGradebook(group)}
+            className="cn-btn-secondary rounded-md px-3 py-1.5 text-xs font-medium flex items-center gap-1.5"
+          >
+            <Download size={13} /> Excel татах
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-1.5 mt-3">
+          {PERFORMANCE_LEVELS.map((L) => (
+            <span key={L} className="cn-tag">
+              {L} · {levelCounts[L]}
+            </span>
+          ))}
+        </div>
+      </div>
+      {n === 0 ? (
+        <EmptyState text="Энэ шалгалтыг одоогоор сурагч өгөөгүй байна." />
       ) : (
-        <>
-          <p className="text-xs mb-3" style={{ color: "#6B6858" }}>
-            Мөр дээр дарж асуулт бүрийн оноо, сурагчийн хариулт, зөв хариултыг харна.
-          </p>
-          <div className="cn-card rounded-xl overflow-hidden overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="cn-card rounded-xl overflow-x-auto">
+          <table className="cn-grade">
             <thead>
-              <tr style={{ background: "#EAEFF8" }}>
-                <th className="text-left px-3 py-2 font-semibold" style={{ color: "#24478F" }}>Сурагч</th>
-                <th className="text-left px-3 py-2 font-semibold" style={{ color: "#24478F" }}>Шалгалт</th>
-                <th className="text-left px-3 py-2 font-semibold" style={{ color: "#24478F" }}>Хичээл</th>
-                <th className="text-left px-3 py-2 font-semibold" style={{ color: "#24478F" }}>Оноо</th>
-                <th className="text-left px-3 py-2 font-semibold" style={{ color: "#24478F" }}>Огноо</th>
-                <th className="w-8" />
+              <tr>
+                <th className="text-center cn-sticky-num">№</th>
+                <th className="text-left cn-sticky-name">Сурагчийн нэр</th>
+                {cols.map((c) => (
+                  <th key={c.index} className="text-center" title={c.text || `Даалгавар ${c.index + 1}`}>
+                    <span className="cn-qnum">{c.index + 1}</span>
+                  </th>
+                ))}
+                <th className="text-center cn-sep">Авах</th>
+                <th className="text-center">Авсан</th>
+                <th className="text-center">Гүйцэтгэл</th>
+                <th className="text-center">Түвшин</th>
+              </tr>
+              <tr>
+                <th className="cn-sticky-num" />
+                <th className="text-left cn-sticky-name" style={{ fontWeight: 500 }}>Даалгаврын оноо</th>
+                {cols.map((c) => (
+                  <th key={c.index} className="text-center">{c.points}</th>
+                ))}
+                <th className="cn-sep" />
+                <th />
+                <th />
+                <th />
               </tr>
             </thead>
             <tbody>
-              {attempts.map((a) => {
-                const pct = a.total > 0 ? Math.round((a.score / a.total) * 100) : 0;
-                const open = openId === a.id;
+              {rowData.map(({ a, i, earned, max, got, pct, level }) => {
+                const key = `${group.key}:${a.studentName}`;
+                const open = openKey === key;
                 return (
-                  <Fragment key={a.id}>
-                    <tr
-                      style={{ borderTop: "1px solid #E3DCC8", cursor: "pointer" }}
-                      onClick={() => setOpenId(open ? null : a.id)}
-                    >
-                      <td className="px-3 py-2">{a.studentName}</td>
-                      <td className="px-3 py-2">{a.quizTitle}</td>
-                      <td className="px-3 py-2"><span className="cn-tag">{a.subject}</span></td>
-                      <td className="px-3 py-2 font-semibold" style={{ color: pct >= 60 ? "#2F6F4E" : "#9A3324" }}>
-                        {a.score}/{a.total} ({pct}%)
-                      </td>
-                      <td className="px-3 py-2 text-xs" style={{ color: "#6B6858" }}>{fmtDate(a.date)}</td>
-                      <td className="px-2 py-2">
-                        <ChevronDown
-                          size={16}
-                          style={{
-                            color: "#24478F",
-                            transform: open ? "rotate(180deg)" : "none",
-                            transition: "transform 0.15s",
-                          }}
-                        />
-                      </td>
-                    </tr>
-                    {open ? (
-                      <tr style={{ background: "#F7F4EA" }}>
-                        <td colSpan={6} className="px-0 py-0">
-                          <AttemptBreakdown details={a.details} />
+                  <tr
+                    key={a.id}
+                    className={open ? "cn-grade-open" : ""}
+                    onClick={() => setOpenKey(open ? null : key)}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <td className="text-center cn-sticky-num" style={{ color: "#6B6858" }}>{i + 1}</td>
+                    <td className="font-medium cn-sticky-name">{a.studentName}</td>
+                    {earned.map((v, ci) => {
+                      const full = v != null && v === cols[ci].points && cols[ci].points > 0;
+                      const zero = v === 0;
+                      const cls = v == null ? "" : full ? "cn-score cn-score-ok" : zero ? "cn-score cn-score-bad" : "cn-score cn-score-mid";
+                      return (
+                        <td key={ci} className="text-center">
+                          {v == null ? <span style={{ color: "#D8D0BA" }}>—</span> : <span className={cls}>{v}</span>}
                         </td>
-                      </tr>
-                    ) : null}
-                  </Fragment>
+                      );
+                    })}
+                    <td className="text-center cn-sep" style={{ color: "#6B6858" }}>{max}</td>
+                    <td className="text-center font-semibold">{got}</td>
+                    <td className="text-center">
+                      <span className={pct >= 60 ? "cn-score cn-score-ok" : "cn-score cn-score-bad"}>
+                        {pct.toFixed(1)}%
+                      </span>
+                    </td>
+                    <td className="text-center">
+                      <span className="cn-level">{level}</span>
+                    </td>
+                  </tr>
                 );
               })}
             </tbody>
+            <tfoot>
+              <tr>
+                <td className="cn-sticky-num" />
+                <td className="cn-sticky-name">Авах оноо</td>
+                {colPossible.map((v, i) => (
+                  <td key={i} className="text-center">{v}</td>
+                ))}
+                <td className="text-center cn-sep">{totalPossibleAll}</td>
+                <td />
+                <td />
+                <td />
+              </tr>
+              <tr>
+                <td className="cn-sticky-num" />
+                <td className="cn-sticky-name">Авсан оноо</td>
+                {colEarned.map((v, i) => (
+                  <td key={i} className="text-center">{v}</td>
+                ))}
+                <td className="cn-sep" />
+                <td className="text-center">{totalEarnedAll}</td>
+                <td />
+                <td />
+              </tr>
+              <tr>
+                <td className="cn-sticky-num" />
+                <td className="cn-sticky-name">Гүйцэтгэл</td>
+                {colPossible.map((p, i) => {
+                  const pct = p > 0 ? (colEarned[i] / p) * 100 : 0;
+                  return (
+                    <td key={i} className="text-center">
+                      <span className={pct >= 60 ? "cn-score cn-score-ok" : "cn-score cn-score-bad"}>
+                        {pct.toFixed(1)}%
+                      </span>
+                    </td>
+                  );
+                })}
+                <td className="cn-sep" />
+                <td />
+                <td className="text-center">
+                  <span className={overallPct >= 60 ? "cn-score cn-score-ok" : "cn-score cn-score-bad"}>
+                    {overallPct.toFixed(1)}%
+                  </span>
+                </td>
+                <td />
+              </tr>
+            </tfoot>
           </table>
         </div>
-        </>
       )}
+      {openKey && openKey.startsWith(`${group.key}:`) ? (
+        <div className="mt-3 cn-card rounded-xl overflow-hidden">
+          {(() => {
+            const name = openKey.slice(group.key.length + 1);
+            const row = group.rows.find((r) => r.studentName === name);
+            if (!row) return null;
+            return (
+              <div>
+                <div className="px-3 py-2 text-sm font-semibold" style={{ background: "#EAEFF8", color: "#24478F" }}>
+                  {row.studentName} — асуулт бүрийн хариу
+                </div>
+                <AttemptBreakdown details={orderDetailsForTeacher(row.details, group.quiz)} />
+              </div>
+            );
+          })()}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ResultsTable({ setTab, attempts, quizzes = [], students = [], classes = [] }) {
+  const [selectedClassId, setSelectedClassId] = useState(null);
+  const [selectedQuizId, setSelectedQuizId] = useState(null);
+  const [openKey, setOpenKey] = useState(null);
+
+  const selectedClass = (classes || []).find((c) => c.id === selectedClassId) || null;
+  const classAttempts = selectedClass ? attemptsForClass(attempts, students, selectedClass.id) : [];
+  const classStudents = selectedClass ? students.filter((s) => s.classId === selectedClass.id) : students;
+
+  const classQuizzes = (() => {
+    if (!selectedClass) return [];
+    const takenIds = new Set(classAttempts.map((a) => a.quizId).filter(Boolean));
+    const takenTitles = new Set(classAttempts.filter((a) => !a.quizId).map((a) => a.quizTitle));
+    const list = (quizzes || []).filter(
+      (q) => quizBelongsToClass(q, selectedClass) || takenIds.has(q.id)
+    );
+    classAttempts.forEach((a) => {
+      if (a.quizId && !list.some((q) => q.id === a.quizId) && !quizzes.some((q) => q.id === a.quizId)) {
+        list.push({
+          id: a.quizId,
+          title: a.quizTitle,
+          subject: a.subject,
+          questions: [],
+          durationMinutes: 30,
+        });
+      }
+    });
+    const orphanTitles = [...takenTitles].filter((t) => !list.some((q) => q.title === t));
+    orphanTitles.forEach((title) => {
+      const sample = classAttempts.find((a) => a.quizTitle === title);
+      list.push({
+        id: `title:${title}`,
+        title,
+        subject: sample?.subject || "",
+        questions: [],
+        durationMinutes: 30,
+      });
+    });
+    return list
+      .map((q) => {
+        const related = classAttempts.filter(
+          (a) => (q.id && a.quizId === q.id) || a.quizTitle === q.title
+        );
+        const latest = related.reduce((m, a) => (a.date > (m || 0) ? a.date : m), 0);
+        const uniqueStudents = new Set(related.map((a) => a.studentName)).size;
+        return { quiz: q, attemptCount: related.length, uniqueStudents, latest };
+      })
+      .sort((a, b) => (b.latest || 0) - (a.latest || 0) || String(a.quiz.title).localeCompare(String(b.quiz.title), "mn"));
+  })();
+
+  const selectedQuizItem = classQuizzes.find((x) => x.quiz.id === selectedQuizId) || null;
+
+  if (classes.length === 0) {
+    const groups = groupAttemptsByQuiz(attempts, quizzes, students);
+    if (!selectedQuizId) {
+      return (
+        <div>
+          <BackRow onBack={() => setTab("home")} title="Сурагчдын үр дүн" />
+          {groups.length === 0 ? (
+            <EmptyState text="Одоогоор шалгалт өгсөн сурагч алга." />
+          ) : (
+            <div className="grid sm:grid-cols-2 gap-3">
+              {groups.map((g) => (
+                <button
+                  key={g.key}
+                  type="button"
+                  onClick={() => setSelectedQuizId(g.quizId || g.key)}
+                  className="cn-card rounded-lg p-4 text-left transition-transform hover:-translate-y-0.5"
+                >
+                  <span className="cn-tag">{g.subject}</span>
+                  <div className="font-semibold mt-2">{g.quizTitle}</div>
+                  <div className="text-xs mt-1" style={{ color: "#6B6858" }}>{g.rows.length} сурагч өгсөн</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+    const group = groups.find((g) => g.quizId === selectedQuizId || g.key === selectedQuizId);
+    return (
+      <div>
+        <BackRow
+          onBack={() => {
+            setSelectedQuizId(null);
+            setOpenKey(null);
+          }}
+          title={group?.quizTitle || "Шалгалтын анализ"}
+        />
+        {group ? <QuizAnalysisView group={group} openKey={openKey} setOpenKey={setOpenKey} /> : <EmptyState text="Шалгалт олдсонгүй." />}
+      </div>
+    );
+  }
+
+  if (!selectedClass) {
+    return (
+      <div>
+        <BackRow onBack={() => setTab("home")} title="Сурагчдын үр дүн" />
+        <p className="text-xs mb-4" style={{ color: "#6B6858" }}>
+          Ангиа сонгоод тухайн ангийн авсан шалгалтуудыг харна.
+        </p>
+        {classes.length === 0 ? (
+          <EmptyState text="Одоогоор анги үүсгээгүй байна." />
+        ) : (
+          <div className="space-y-2">
+            {sortClasses(classes).map((c) => {
+              const classAtt = attemptsForClass(attempts, students, c.id);
+              const quizCount = new Set(
+                classAtt.map((a) => a.quizId || a.quizTitle).filter(Boolean)
+              ).size;
+              const assigned = (quizzes || []).filter((q) => quizBelongsToClass(q, c)).length;
+              const shown = Math.max(quizCount, assigned);
+              const studentCount = students.filter((s) => s.classId === c.id).length;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedClassId(c.id);
+                    setSelectedQuizId(null);
+                    setOpenKey(null);
+                  }}
+                  className="cn-card rounded-lg p-4 w-full text-left transition-transform hover:-translate-y-0.5"
+                >
+                  <div className="text-sm font-medium" style={{ color: "#24478F" }}>{c.name} анги</div>
+                  <div className="text-xs mt-1.5 flex flex-wrap gap-x-3" style={{ color: "#6B6858" }}>
+                    <span>{studentCount} сурагч</span>
+                    <span>{shown} шалгалт</span>
+                    <span>{classAtt.length} оролдлого</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (!selectedQuizItem) {
+    return (
+      <div>
+        <BackRow
+          onBack={() => {
+            setSelectedClassId(null);
+            setSelectedQuizId(null);
+            setOpenKey(null);
+          }}
+          title={`${selectedClass.name} анги — шалгалтууд`}
+        />
+        {classQuizzes.length === 0 ? (
+          <EmptyState text="Энэ ангид одоогоор шалгалт алга." />
+        ) : (
+          <div className="grid sm:grid-cols-2 gap-3">
+            {classQuizzes.map(({ quiz, uniqueStudents, attemptCount, latest }) => (
+              <button
+                key={quiz.id}
+                type="button"
+                onClick={() => {
+                  setSelectedQuizId(quiz.id);
+                  setOpenKey(null);
+                }}
+                className="cn-card rounded-lg p-4 text-left transition-transform hover:-translate-y-0.5"
+              >
+                <span className="cn-tag">{quiz.subject}</span>
+                <div className="font-semibold mt-2">{quiz.title}</div>
+                <div className="text-xs mt-1.5 flex flex-wrap gap-x-3" style={{ color: "#6B6858" }}>
+                  <span>{quiz.questions?.length ? `${quiz.questions.length} асуулт` : null}</span>
+                  <span>{uniqueStudents} сурагч өгсөн</span>
+                  {attemptCount > uniqueStudents ? <span>{attemptCount} оролдлого</span> : null}
+                </div>
+                {latest ? (
+                  <div className="text-xs mt-1" style={{ color: "#6B6858" }}>{fmtDate(latest)}</div>
+                ) : (
+                  <div className="text-xs mt-1" style={{ color: "#8A5A00" }}>Одоогоор өгөөгүй</div>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const group = makeQuizAnalysisGroup(selectedQuizItem.quiz, classAttempts, classStudents);
+  return (
+    <div>
+      <BackRow
+        onBack={() => {
+          setSelectedQuizId(null);
+          setOpenKey(null);
+        }}
+        title={selectedQuizItem.quiz.title}
+      />
+      <QuizAnalysisView group={group} openKey={openKey} setOpenKey={setOpenKey} />
     </div>
   );
 }
@@ -2809,7 +3627,7 @@ function LessonDetail({ setTab, activeLesson }) {
   );
 }
 
-function QuizList({ setTab, quizzes, setActiveQuiz, setQuizAnswers, studentUsername, studentSession }) {
+function QuizList({ setTab, quizzes, startStudentQuiz, studentSession }) {
   return (
     <div>
       <BackRow onBack={() => setTab("home")} title="Шалгалтууд" />
@@ -2826,9 +3644,7 @@ function QuizList({ setTab, quizzes, setActiveQuiz, setQuizAnswers, studentUsern
                 disabled={!open}
                 onClick={() => {
                   if (!open) return;
-                  setActiveQuiz(loadOrCreateStudentQuiz(q, studentUsername));
-                  setQuizAnswers({});
-                  setTab("quiz");
+                  startStudentQuiz?.(q);
                 }}
                 className={"cn-card rounded-lg p-4 text-left transition-transform " + (open ? "hover:-translate-y-0.5" : "opacity-70 cursor-not-allowed")}
               >
@@ -2875,9 +3691,16 @@ function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz,
   const allowed = Boolean(activeQuiz) && (!studentSession || quizVisibleToStudent(activeQuiz, studentSession));
 
   useEffect(() => {
-    if (!activeQuiz?.isOpen || (studentSession && !quizVisibleToStudent(activeQuiz, studentSession))) {
+    if (studentSession && activeQuiz && !quizVisibleToStudent(activeQuiz, studentSession)) {
       setTab("quizzes");
-      return;
+      return undefined;
+    }
+    if (!activeQuiz?.isOpen) {
+      if (activeQuiz && !submittedRef.current) {
+        submittedRef.current = true;
+        submitQuizRef.current({ force: true, closed: true });
+      }
+      return undefined;
     }
     submittedRef.current = false;
     const key = quizDeadlineKey(activeQuiz.id, studentUsername);
@@ -2915,6 +3738,7 @@ function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz,
   }, [activeQuiz?.id, activeQuiz?.isOpen, activeQuiz?.classId, activeQuiz?.grade, activeQuiz?.forGrade, durationMinutes, studentUsername, studentSession, setTab]);
 
   if (!activeQuiz || !allowed) return null;
+  if (!activeQuiz.isOpen) return null;
 
   const urgent = secondsLeft <= 60;
 
@@ -3016,7 +3840,11 @@ function QuizResultView({ setTab, quizResult, activeQuiz }) {
         <span className="text-xs font-semibold mt-1">{quizResult.score}/{quizResult.total} оноо</span>
       </div>
       <p className="mt-6 text-sm text-center" style={{ color: "#6B6858" }}>
-        {quizResult.timedOut ? "Хугацаа дууссан тул шалгалт автоматаар илгээгдлээ. " : ""}
+        {quizResult.closed
+          ? "Багш шалгалтыг хаасан тул хариулт автоматаар илгээгдлээ. "
+          : quizResult.timedOut
+            ? "Хугацаа дууссан тул шалгалт автоматаар илгээгдлээ. "
+            : ""}
         {good ? "Сайн байна! Үргэлжлүүлээрэй." : "Дахин давтаад үзээрэй."} — {activeQuiz?.title}
       </p>
       <div className="flex gap-3 mt-5">

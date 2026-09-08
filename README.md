@@ -16,9 +16,10 @@
 10. Шалгалтын хугацаа / эхлүүлэх эрхийн тулд **нэмж** `supabase-quiz-timing.sql`-ийг Run хийнэ.
 11. Шалгалтыг анги/түвшинд харуулахын тулд **нэмж** `supabase-quiz-class.sql`-ийг Run хийнэ.
 12. Асуулт бүрийн онооны задаргаа хадгалахын тулд **нэмж** `supabase-attempt-details.sql`-ийг Run хийнэ.
-13. **Authentication → Providers → Email** идэвхтэй эсэхийг шалгана.
-14. **Authentication → Users → Add user** дарж багшийн имэйл, нууц үг үүсгэнэ (эсвэл апп дээр бүртгүүлэхийг зөвшөөрнө).
-15. Зүүн талын цэснээс **Project Settings → API** руу орж, дараах 2 утгыг хуулж ав:
+13. Шалгалт эхлүүлэх/хаах товч сурагчид шууд харагдахын тулд **нэмж** `supabase-quiz-realtime.sql`-ийг Run хийнэ.
+14. **Authentication → Providers → Email** идэвхтэй эсэхийг шалгана.
+15. **Authentication → Users → Add user** дарж багшийн имэйл, нууц үг үүсгэнэ (эсвэл апп дээр бүртгүүлэхийг зөвшөөрнө).
+16. Зүүн талын цэснээс **Project Settings → API** руу орж, дараах 2 утгыг хуулж ав:
    - **Project URL** (жишээ нь `https://xxxxx.supabase.co`)
    - **anon public key**
 
@@ -104,6 +105,7 @@ angiin-devter/
 ├── supabase-quiz-timing.sql   ← Шалгалтын хугацаа + нээх/хаах
 ├── supabase-quiz-class.sql    ← Шалгалтыг анги/түвшинд харуулах
 ├── supabase-attempt-details.sql ← Асуулт бүрийн онооны задаргаа
+├── supabase-quiz-realtime.sql ← Шалгалт нээх/хаах realtime
 ├── .env.example
 ├── vercel.json
 └── package.json

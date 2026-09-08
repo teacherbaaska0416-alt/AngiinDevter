@@ -225,3 +225,19 @@ create policy "Teachers delete quiz images"
     bucket_id = 'quiz-images'
     and (storage.foldername(name))[1] = auth.uid()::text
   );
+
+alter table quizzes replica identity full;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'quizzes'
+  ) then
+    execute 'alter publication supabase_realtime add table quizzes';
+  end if;
+end $$;
+
