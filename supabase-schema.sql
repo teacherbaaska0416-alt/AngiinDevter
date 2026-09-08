@@ -18,6 +18,9 @@ create table if not exists quizzes (
   questions jsonb not null,
   duration_minutes int not null default 30,
   is_open boolean not null default false,
+  class_id uuid,
+  grade int,
+  for_grade boolean not null default false,
   created_at timestamptz not null default now()
 );
 
@@ -29,6 +32,7 @@ create table if not exists attempts (
   subject text not null,
   score int not null,
   total int not null,
+  details jsonb not null default '[]'::jsonb,
   date timestamptz not null default now()
 );
 
@@ -43,6 +47,21 @@ create table if not exists classes (
 );
 
 create index if not exists classes_teacher_id_idx on classes(teacher_id);
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'quizzes_class_id_fkey'
+  ) then
+    alter table quizzes
+      add constraint quizzes_class_id_fkey
+      foreign key (class_id) references classes(id) on delete set null;
+  end if;
+end $$;
+
+create index if not exists quizzes_class_id_idx on quizzes(class_id);
+create index if not exists quizzes_grade_idx on quizzes(grade);
 
 create table if not exists students (
   id uuid primary key default gen_random_uuid(),
@@ -147,7 +166,8 @@ begin
     'name', s.name,
     'username', s.username,
     'student_no', s.student_no,
-    'class_name', c.name
+    'class_name', c.name,
+    'class_grade', c.grade
   )
   into result
   from students s

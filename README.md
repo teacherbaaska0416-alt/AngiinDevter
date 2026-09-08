@@ -14,9 +14,11 @@
 8. Сурагч нэвтрэх нэрээр нэвтрэхийн тулд **нэмж** `supabase-student-login.sql`-ийг Run хийнэ.
 9. Шалгалтад зураг оруулахын тулд **нэмж** `supabase-quiz-images.sql`-ийг Run хийнэ.
 10. Шалгалтын хугацаа / эхлүүлэх эрхийн тулд **нэмж** `supabase-quiz-timing.sql`-ийг Run хийнэ.
-11. **Authentication → Providers → Email** идэвхтэй эсэхийг шалгана.
-12. **Authentication → Users → Add user** дарж багшийн имэйл, нууц үг үүсгэнэ (эсвэл апп дээр бүртгүүлэхийг зөвшөөрнө).
-13. Зүүн талын цэснээс **Project Settings → API** руу орж, дараах 2 утгыг хуулж ав:
+11. Шалгалтыг анги/түвшинд харуулахын тулд **нэмж** `supabase-quiz-class.sql`-ийг Run хийнэ.
+12. Асуулт бүрийн онооны задаргаа хадгалахын тулд **нэмж** `supabase-attempt-details.sql`-ийг Run хийнэ.
+13. **Authentication → Providers → Email** идэвхтэй эсэхийг шалгана.
+14. **Authentication → Users → Add user** дарж багшийн имэйл, нууц үг үүсгэнэ (эсвэл апп дээр бүртгүүлэхийг зөвшөөрнө).
+15. Зүүн талын цэснээс **Project Settings → API** руу орж, дараах 2 утгыг хуулж ав:
    - **Project URL** (жишээ нь `https://xxxxx.supabase.co`)
    - **anon public key**
 
@@ -100,6 +102,8 @@ angiin-devter/
 ├── supabase-student-login.sql ← Сурагч нэвтрэх нэрээр нэвтрэх RPC
 ├── supabase-quiz-images.sql   ← Шалгалтын зураг Storage bucket
 ├── supabase-quiz-timing.sql   ← Шалгалтын хугацаа + нээх/хаах
+├── supabase-quiz-class.sql    ← Шалгалтыг анги/түвшинд харуулах
+├── supabase-attempt-details.sql ← Асуулт бүрийн онооны задаргаа
 ├── .env.example
 ├── vercel.json
 └── package.json

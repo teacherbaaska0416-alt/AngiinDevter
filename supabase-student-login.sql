@@ -21,7 +21,8 @@ begin
     'name', s.name,
     'username', s.username,
     'student_no', s.student_no,
-    'class_name', c.name
+    'class_name', c.name,
+    'class_grade', c.grade
   )
   into result
   from students s

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import {
   GraduationCap,
   Users,
@@ -23,6 +23,7 @@ import {
   Clock,
   Lock,
   Unlock,
+  ChevronDown,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
@@ -366,7 +367,66 @@ function emptyQuestion() {
 }
 
 function emptyQuizForm() {
-  return { title: "", subject: SUBJECTS[0], durationMinutes: 30, questions: [emptyQuestion()] };
+  return {
+    title: "",
+    subject: SUBJECTS[0],
+    durationMinutes: 30,
+    classId: "",
+    grade: "",
+    forGrade: false,
+    questions: [emptyQuestion()],
+  };
+}
+
+function parseGradeFromClassName(name) {
+  const m = String(name || "").match(/^(\d{1,2})/);
+  if (!m) return null;
+  const g = Number(m[1]);
+  return GRADES.includes(g) ? g : null;
+}
+
+function studentGradeFromSession(session) {
+  if (!session) return null;
+  const g = Number(session.grade);
+  if (Number.isFinite(g) && GRADES.includes(g)) return g;
+  return parseGradeFromClassName(session.className);
+}
+
+function sortClasses(list) {
+  return [...(list || [])].sort((a, b) => {
+    const g = (Number(a.grade) || 0) - (Number(b.grade) || 0);
+    if (g !== 0) return g;
+    return String(a.section || "").localeCompare(String(b.section || ""), "mn");
+  });
+}
+
+function quizAudienceLabel(quiz, classes = []) {
+  if (quiz?.forGrade && quiz.grade != null && quiz.grade !== "") {
+    return `${quiz.grade}-р анги (бүх бүлэг)`;
+  }
+  const cls = (classes || []).find((c) => c.id === quiz?.classId);
+  if (cls) return `${cls.name} анги`;
+  if (quiz?.classId) return "Сонгосон анги";
+  if (quiz?.grade != null && quiz.grade !== "") return `${quiz.grade}-р анги`;
+  return "Бүх анги";
+}
+
+function quizVisibleToStudent(quiz, session) {
+  if (!quiz) return false;
+  const hasClass = Boolean(quiz.classId);
+  const hasGrade = quiz.grade != null && quiz.grade !== "" && Number(quiz.grade) > 0;
+  if (!hasClass && !hasGrade) return true;
+  if (!session) return false;
+  if (quiz.forGrade && hasGrade) {
+    const g = studentGradeFromSession(session);
+    return g != null && Number(quiz.grade) === Number(g);
+  }
+  if (hasClass) return quiz.classId === session.classId;
+  if (hasGrade) {
+    const g = studentGradeFromSession(session);
+    return g != null && Number(quiz.grade) === Number(g);
+  }
+  return false;
 }
 
 function normalizeOption(o) {
@@ -388,6 +448,57 @@ function questionPointsValid(q) {
 
 function quizTotalPoints(questions) {
   return (questions || []).reduce((sum, q) => sum + questionPoints(q), 0);
+}
+
+function optionPreview(opt) {
+  const o = normalizeOption(opt);
+  if (o.text.trim()) return o.text.trim();
+  if (o.imageUrl) return "Зураг";
+  return "";
+}
+
+function buildAttemptDetails(questions, quizAnswers) {
+  return (questions || []).map((q, i) => {
+    const nq = normalizeQuestion(q);
+    const pts = questionPoints(nq);
+    const chosen = quizAnswers?.[i];
+    const unanswered = chosen === undefined || chosen === null;
+    const isCorrect = !unanswered && chosen === nq.correct;
+    const chosenOpt = !unanswered ? nq.options[chosen] : null;
+    const correctOpt = nq.options[nq.correct];
+    return {
+      text: nq.text,
+      imageUrl: nq.imageUrl,
+      points: pts,
+      earned: isCorrect ? pts : 0,
+      isCorrect,
+      unanswered,
+      chosenLabel: !unanswered && LETTERS[chosen] ? LETTERS[chosen] : "",
+      chosenText: chosenOpt ? optionPreview(chosenOpt) : "",
+      chosenImageUrl: chosenOpt?.imageUrl || "",
+      correctLabel: LETTERS[nq.correct] || "",
+      correctText: correctOpt ? optionPreview(correctOpt) : "",
+      correctImageUrl: correctOpt?.imageUrl || "",
+    };
+  });
+}
+
+function normalizeAttemptDetails(details) {
+  if (!Array.isArray(details)) return [];
+  return details.map((d) => ({
+    text: d?.text || "",
+    imageUrl: d?.imageUrl || "",
+    points: questionPoints({ points: d?.points }),
+    earned: Number.isFinite(Number(d?.earned)) ? Math.max(0, Number(d.earned)) : 0,
+    isCorrect: Boolean(d?.isCorrect),
+    unanswered: Boolean(d?.unanswered),
+    chosenLabel: d?.chosenLabel || "",
+    chosenText: d?.chosenText || "",
+    chosenImageUrl: d?.chosenImageUrl || "",
+    correctLabel: d?.correctLabel || "",
+    correctText: d?.correctText || "",
+    correctImageUrl: d?.correctImageUrl || "",
+  }));
 }
 
 function normalizeQuestion(q) {
@@ -542,6 +653,9 @@ export default function ClassroomApp() {
     questions: (q.questions || []).map(normalizeQuestion),
     durationMinutes: Number(q.duration_minutes) > 0 ? Number(q.duration_minutes) : 30,
     isOpen: Boolean(q.is_open),
+    classId: q.class_id || "",
+    grade: q.grade != null && q.grade !== "" ? Number(q.grade) : null,
+    forGrade: Boolean(q.for_grade),
     createdAt: new Date(q.created_at).getTime(),
   });
   const mapClass = (c) => ({
@@ -571,6 +685,7 @@ export default function ClassroomApp() {
     subject: a.subject,
     score: a.score,
     total: a.total,
+    details: normalizeAttemptDetails(a.details),
     date: new Date(a.date).getTime(),
   });
 
@@ -749,6 +864,7 @@ export default function ClassroomApp() {
   function quizFormValid() {
     if (!quizForm.title.trim()) return false;
     if (!(Number(quizForm.durationMinutes) > 0)) return false;
+    if (!quizForm.classId && !(Number(quizForm.grade) > 0)) return false;
     return quizForm.questions.every(
       (q) =>
         questionHasContent(q) &&
@@ -761,6 +877,9 @@ export default function ClassroomApp() {
     const hints = [];
     if (!quizForm.title.trim()) hints.push("Шалгалтын гарчиг оруулна");
     if (!(Number(quizForm.durationMinutes) > 0)) hints.push("Шалгалтын хугацаа (минут) оруулна");
+    if (!quizForm.classId && !(Number(quizForm.grade) > 0)) {
+      hints.push(classes.length ? "Шалгалт харагдах ангийг сонгоно" : "Түвшин (анги) сонгоно, эсвэл эхлээд анги үүсгэнэ");
+    }
     quizForm.questions.forEach((q, qi) => {
       const nq = normalizeQuestion(q);
       if (!questionHasContent(nq)) {
@@ -815,7 +934,12 @@ export default function ClassroomApp() {
 
   function resetQuizForm() {
     setEditingQuizId(null);
-    setQuizForm(emptyQuizForm());
+    const only = classes.length === 1 ? classes[0] : null;
+    setQuizForm({
+      ...emptyQuizForm(),
+      classId: only?.id || "",
+      grade: only?.grade ?? "",
+    });
   }
 
   function startEditQuiz(quiz) {
@@ -826,6 +950,9 @@ export default function ClassroomApp() {
       title: quiz.title || "",
       subject: quiz.subject || SUBJECTS[0],
       durationMinutes: Number(quiz.durationMinutes) > 0 ? Number(quiz.durationMinutes) : 30,
+      classId: quiz.classId || "",
+      grade: quiz.grade ?? "",
+      forGrade: Boolean(quiz.forGrade),
       questions: questions.length ? questions : [emptyQuestion()],
     });
   }
@@ -834,12 +961,25 @@ export default function ClassroomApp() {
     if (!quizFormValid()) return false;
     const questions = quizForm.questions.map(normalizeQuestion);
     const durationMinutes = Math.max(1, Math.round(Number(quizForm.durationMinutes) || 30));
+    const selectedClass = classes.find((c) => c.id === quizForm.classId) || null;
+    const grade = selectedClass
+      ? selectedClass.grade
+      : (Number(quizForm.grade) > 0 ? Number(quizForm.grade) : null);
     const payload = {
       title: quizForm.title,
       subject: quizForm.subject,
       questions,
       duration_minutes: durationMinutes,
+      class_id: selectedClass?.id || null,
+      grade,
+      for_grade: selectedClass ? Boolean(quizForm.forGrade) : Boolean(grade),
     };
+
+    const classColumnMissing =
+      (msg) =>
+        msg?.includes("class_id") ||
+        msg?.includes("for_grade") ||
+        msg?.includes("schema cache");
 
     if (editingQuizId) {
       const { data, error } = await supabase
@@ -853,6 +993,8 @@ export default function ClassroomApp() {
           setSaveError("Шалгалт засах эрх хүрэлцэхгүй. Багшаар нэвтэрсэн эсэхээ шалгана уу.");
         } else if (error.message?.includes("duration_minutes") || error.message?.includes("is_open")) {
           setSaveError("Шалгалтын хугацааны багана байхгүй. Supabase SQL Editor-т supabase-quiz-timing.sql-ийг Run хийнэ үү.");
+        } else if (error.code === "PGRST204" || classColumnMissing(error.message)) {
+          setSaveError("Шалгалтын ангийн багана байхгүй. Supabase SQL Editor-т supabase-quiz-class.sql-ийг Run хийнэ үү.");
         } else {
           setSaveError("Шалгалт шинэчлэхэд алдаа гарлаа.");
         }
@@ -874,6 +1016,8 @@ export default function ClassroomApp() {
     if (error) {
       if (error.message?.includes("duration_minutes") || error.message?.includes("is_open")) {
         setSaveError("Шалгалтын хугацааны багана байхгүй. Supabase SQL Editor-т supabase-quiz-timing.sql-ийг Run хийнэ үү.");
+      } else if (error.code === "PGRST204" || classColumnMissing(error.message)) {
+        setSaveError("Шалгалтын ангийн багана байхгүй. Supabase SQL Editor-т supabase-quiz-class.sql-ийг Run хийнэ үү.");
       } else {
         setSaveError("Шалгалт хадгалахад алдаа гарлаа.");
       }
@@ -1094,6 +1238,7 @@ export default function ClassroomApp() {
 
   async function submitQuiz(opts = {}) {
     if (!activeQuiz || submittingQuizRef.current) return;
+    if (studentSession && !quizVisibleToStudent(activeQuiz, studentSession)) return;
     const force = opts.force === true;
     const questions = (activeQuiz.questions || []).map(normalizeQuestion);
     if (!force && !questions.every((_, i) => quizAnswers[i] !== undefined)) return;
@@ -1104,19 +1249,22 @@ export default function ClassroomApp() {
       if (quizAnswers[i] === q.correct) score += questionPoints(q);
     });
     const total = quizTotalPoints(questions);
+    const details = buildAttemptDetails(questions, quizAnswers);
+    const payload = {
+      student_name: studentSession?.name || studentName,
+      quiz_id: activeQuiz.id,
+      quiz_title: activeQuiz.title,
+      subject: activeQuiz.subject,
+      score,
+      total,
+      details,
+    };
     try {
-      const { data, error } = await supabase
-        .from("attempts")
-        .insert({
-          student_name: studentSession?.name || studentName,
-          quiz_id: activeQuiz.id,
-          quiz_title: activeQuiz.title,
-          subject: activeQuiz.subject,
-          score,
-          total,
-        })
-        .select()
-        .single();
+      let { data, error } = await supabase.from("attempts").insert(payload).select().single();
+      if (error && (error.code === "PGRST204" || /details|schema cache/i.test(error.message || ""))) {
+        const { details: _omit, ...withoutDetails } = payload;
+        ({ data, error } = await supabase.from("attempts").insert(withoutDetails).select().single());
+      }
       if (error) {
         setSaveError("Үр дүн хадгалахад алдаа гарлаа.");
       } else {
@@ -1168,6 +1316,7 @@ export default function ClassroomApp() {
         username: data.username,
         studentNo: data.student_no,
         className: data.class_name || "",
+        grade: data.class_grade != null ? Number(data.class_grade) : parseGradeFromClassName(data.class_name),
       };
       setStudentSession(session);
       setStudentName(session.name);
@@ -1388,6 +1537,7 @@ export default function ClassroomApp() {
               quizResult={quizResult}
               submitQuiz={submitQuiz}
               studentUsername={studentSession?.username || ""}
+              studentSession={studentSession}
             />
           )}
         </div>
@@ -2036,6 +2186,7 @@ function QuizBuilder({
   setQuizOpen,
   quizFormValid,
   quizFormMissingHints = [],
+  classes = [],
 }) {
   const fileRef = useRef(null);
   const [showForm, setShowForm] = useState(false);
@@ -2074,6 +2225,9 @@ function QuizBuilder({
         title: parsed.title || f.title,
         subject: parsed.subject || f.subject,
         durationMinutes: f.durationMinutes || 30,
+        classId: f.classId,
+        grade: f.grade,
+        forGrade: f.forGrade,
         questions: normalized,
       }));
       setShowForm(true);
@@ -2128,7 +2282,7 @@ function QuizBuilder({
               </h3>
               {isEditing ? (
                 <p className="text-xs mt-1" style={{ color: "#6B6858" }}>
-                  Гарчиг, хугацаа, асуулт, хариултыг засаад «Өөрчлөлт хадгалах» дарна уу. Нээлттэй/хаалттай төлөв хэвээр үлдэнэ.
+                  Гарчиг, анги, хугацаа, асуулт, хариултыг засаад «Өөрчлөлт хадгалах» дарна уу. Нээлттэй/хаалттай төлөв хэвээр үлдэнэ.
                 </p>
               ) : null}
             </div>
@@ -2210,6 +2364,72 @@ function QuizBuilder({
             >
               {SUBJECTS.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
+            <div className="mb-4">
+              <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>
+                Харагдах анги / түвшин
+              </label>
+              {classes.length > 0 ? (
+                <>
+                  <select
+                    className="cn-select w-full px-3 py-2 text-sm"
+                    value={quizForm.classId}
+                    onChange={(e) => {
+                      const classId = e.target.value;
+                      const cls = classes.find((c) => c.id === classId);
+                      setQuizForm((f) => ({
+                        ...f,
+                        classId,
+                        grade: cls?.grade ?? "",
+                      }));
+                    }}
+                  >
+                    <option value="">Анги сонгоно уу</option>
+                    {sortClasses(classes).map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} анги — {c.grade}-р түвшин
+                      </option>
+                    ))}
+                  </select>
+                  {quizForm.classId ? (
+                    <label className="mt-2 flex items-start gap-2 text-xs" style={{ color: "#6B6858" }}>
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={Boolean(quizForm.forGrade)}
+                        onChange={(e) => setQuizForm((f) => ({ ...f, forGrade: e.target.checked }))}
+                      />
+                      <span>
+                        Ижил түвшний бүх бүлэгт харуулах
+                        {quizForm.grade ? ` (${quizForm.grade}-р анги)` : ""}
+                      </span>
+                    </label>
+                  ) : null}
+                  <p className="text-xs mt-1.5" style={{ color: "#6B6858" }}>
+                    {quizForm.classId && quizForm.forGrade
+                      ? `${quizForm.grade}-р ангийн бүх сурагчид харна.`
+                      : quizForm.classId
+                        ? "Зөвхөн сонгосон ангийн сурагчид харна."
+                        : "Шалгалт аль ангид харагдахыг сонгоно."}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <select
+                    className="cn-select w-full px-3 py-2 text-sm"
+                    value={quizForm.grade}
+                    onChange={(e) => setQuizForm((f) => ({ ...f, grade: e.target.value ? Number(e.target.value) : "", classId: "" }))}
+                  >
+                    <option value="">Түвшин сонгоно уу</option>
+                    {GRADES.map((g) => (
+                      <option key={g} value={g}>{g}-р анги</option>
+                    ))}
+                  </select>
+                  <p className="text-xs mt-1.5" style={{ color: "#6B6858" }}>
+                    Анги бүртгээгүй тул түвшингээр харуулна. Эхлээд «Анги үүсгэх» хэсэгт анги нэмэхийг зөвлөе.
+                  </p>
+                </>
+              )}
+            </div>
             <div className="mb-4">
               <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>
                 Шалгалтын хугацаа (минут)
@@ -2356,6 +2576,7 @@ function QuizBuilder({
                 <span className="cn-tag mr-2">{q.subject}</span>
                 <span className="text-sm font-medium">{q.title}</span>
                 <div className="text-xs mt-1.5 flex flex-wrap gap-x-3 gap-y-1" style={{ color: "#6B6858" }}>
+                  <span>{quizAudienceLabel(q, classes)}</span>
                   <span>{q.questions.length} асуулт</span>
                   <span>{quizTotalPoints(q.questions)} оноо</span>
                   <span className="inline-flex items-center gap-1"><Clock size={12} /> {q.durationMinutes} мин</span>
@@ -2392,14 +2613,81 @@ function QuizBuilder({
   );
 }
 
+function AttemptBreakdown({ details }) {
+  if (!details?.length) {
+    return (
+      <p className="text-xs px-3 py-2" style={{ color: "#6B6858" }}>
+        Энэ оролдлогод асуулт бүрийн онооны задаргаа байхгүй. Шинээр өгсөн шалгалтад харагдана. Хэрэв шинэ шалгалт ч задаргаагүй бол Supabase SQL Editor-т supabase-attempt-details.sql-ийг Run хийнэ үү.
+      </p>
+    );
+  }
+  return (
+    <div className="px-3 py-3 space-y-2">
+      {details.map((d, i) => {
+        const color = d.unanswered ? "#8A5A00" : d.isCorrect ? "#2F6F4E" : "#9A3324";
+        const bg = d.unanswered ? "#FFF6E8" : d.isCorrect ? "#E4F0E9" : "#FBE7E4";
+        return (
+          <div key={i} className="rounded-md p-3" style={{ background: "#FFFEFA", border: "1px solid #E3DCC8" }}>
+            <div className="flex flex-wrap items-start justify-between gap-2 mb-1">
+              <div className="text-sm font-medium min-w-0">
+                {i + 1}. {d.text || (d.imageUrl ? "Зургийг харна уу" : "Асуулт")}
+              </div>
+              <span
+                className="shrink-0 text-xs font-semibold px-2 py-0.5 rounded inline-flex items-center gap-1"
+                style={{ background: bg, color }}
+              >
+                {d.unanswered ? <XCircle size={12} /> : d.isCorrect ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
+                {d.earned}/{d.points} оноо
+              </span>
+            </div>
+            {d.imageUrl ? (
+              <img
+                src={d.imageUrl}
+                alt=""
+                className="mb-2 max-h-28 rounded object-contain border"
+                style={{ borderColor: "#E3DCC8", background: "#FFFEFA" }}
+              />
+            ) : null}
+            <div className="text-xs space-y-1" style={{ color: "#6B6858" }}>
+              <div>
+                Сонгосон:{" "}
+                {d.unanswered ? (
+                  <span style={{ color: "#8A5A00" }}>Хариулаагүй</span>
+                ) : (
+                  <span style={{ color }}>
+                    {d.chosenLabel ? `${d.chosenLabel}) ` : ""}
+                    {d.chosenText || (d.chosenImageUrl ? "Зураг" : "—")}
+                  </span>
+                )}
+              </div>
+              <div>
+                Зөв хариулт:{" "}
+                <span style={{ color: "#2F6F4E" }}>
+                  {d.correctLabel ? `${d.correctLabel}) ` : ""}
+                  {d.correctText || (d.correctImageUrl ? "Зураг" : "—")}
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ResultsTable({ setTab, attempts }) {
+  const [openId, setOpenId] = useState(null);
   return (
     <div>
       <BackRow onBack={() => setTab("home")} title="Сурагчдын үр дүн" />
       {attempts.length === 0 ? (
         <EmptyState text="Одоогоор шалгалт өгсөн сурагч алга." />
       ) : (
-        <div className="cn-card rounded-xl overflow-hidden overflow-x-auto">
+        <>
+          <p className="text-xs mb-3" style={{ color: "#6B6858" }}>
+            Мөр дээр дарж асуулт бүрийн оноо, сурагчийн хариулт, зөв хариултыг харна.
+          </p>
+          <div className="cn-card rounded-xl overflow-hidden overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr style={{ background: "#EAEFF8" }}>
@@ -2408,26 +2696,51 @@ function ResultsTable({ setTab, attempts }) {
                 <th className="text-left px-3 py-2 font-semibold" style={{ color: "#24478F" }}>Хичээл</th>
                 <th className="text-left px-3 py-2 font-semibold" style={{ color: "#24478F" }}>Оноо</th>
                 <th className="text-left px-3 py-2 font-semibold" style={{ color: "#24478F" }}>Огноо</th>
+                <th className="w-8" />
               </tr>
             </thead>
             <tbody>
               {attempts.map((a) => {
-                const pct = Math.round((a.score / a.total) * 100);
+                const pct = a.total > 0 ? Math.round((a.score / a.total) * 100) : 0;
+                const open = openId === a.id;
                 return (
-                  <tr key={a.id} style={{ borderTop: "1px solid #E3DCC8" }}>
-                    <td className="px-3 py-2">{a.studentName}</td>
-                    <td className="px-3 py-2">{a.quizTitle}</td>
-                    <td className="px-3 py-2"><span className="cn-tag">{a.subject}</span></td>
-                    <td className="px-3 py-2 font-semibold" style={{ color: pct >= 60 ? "#2F6F4E" : "#9A3324" }}>
-                      {a.score}/{a.total} ({pct}%)
-                    </td>
-                    <td className="px-3 py-2 text-xs" style={{ color: "#6B6858" }}>{fmtDate(a.date)}</td>
-                  </tr>
+                  <Fragment key={a.id}>
+                    <tr
+                      style={{ borderTop: "1px solid #E3DCC8", cursor: "pointer" }}
+                      onClick={() => setOpenId(open ? null : a.id)}
+                    >
+                      <td className="px-3 py-2">{a.studentName}</td>
+                      <td className="px-3 py-2">{a.quizTitle}</td>
+                      <td className="px-3 py-2"><span className="cn-tag">{a.subject}</span></td>
+                      <td className="px-3 py-2 font-semibold" style={{ color: pct >= 60 ? "#2F6F4E" : "#9A3324" }}>
+                        {a.score}/{a.total} ({pct}%)
+                      </td>
+                      <td className="px-3 py-2 text-xs" style={{ color: "#6B6858" }}>{fmtDate(a.date)}</td>
+                      <td className="px-2 py-2">
+                        <ChevronDown
+                          size={16}
+                          style={{
+                            color: "#24478F",
+                            transform: open ? "rotate(180deg)" : "none",
+                            transition: "transform 0.15s",
+                          }}
+                        />
+                      </td>
+                    </tr>
+                    {open ? (
+                      <tr style={{ background: "#F7F4EA" }}>
+                        <td colSpan={6} className="px-0 py-0">
+                          <AttemptBreakdown details={a.details} />
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
                 );
               })}
             </tbody>
           </table>
         </div>
+        </>
       )}
     </div>
   );
@@ -2436,7 +2749,9 @@ function ResultsTable({ setTab, attempts }) {
 /* ---------------- STUDENT ---------------- */
 
 function StudentView(props) {
-  const { tab, setTab, lessons, quizzes, myAttempts } = props;
+  const { tab, setTab, lessons, quizzes, myAttempts, studentSession } = props;
+  const visibleQuizzes = (quizzes || []).filter((q) => quizVisibleToStudent(q, studentSession));
+  const studentProps = { ...props, quizzes: visibleQuizzes };
 
   if (tab === "home") {
     return (
@@ -2444,19 +2759,19 @@ function StudentView(props) {
         <h2 className="cn-hand text-4xl mb-5" style={{ color: "#24478F" }}>Сурагчийн самбар</h2>
         <div className="grid sm:grid-cols-3 gap-4">
           <NavCard icon={<BookOpen size={22} color="#24478F" />} label="Хичээлүүд" sub={`${lessons.length} хичээл`} onClick={() => setTab("lessons")} />
-          <NavCard icon={<ClipboardList size={22} color="#24478F" />} label="Шалгалтууд" sub={`${quizzes.length} шалгалт`} onClick={() => setTab("quizzes")} />
+          <NavCard icon={<ClipboardList size={22} color="#24478F" />} label="Шалгалтууд" sub={`${visibleQuizzes.length} шалгалт`} onClick={() => setTab("quizzes")} />
           <NavCard icon={<Trophy size={22} color="#24478F" />} label="Миний онооны түүх" sub={`${myAttempts.length} оролдлого`} onClick={() => setTab("scores")} />
         </div>
       </div>
     );
   }
 
-  if (tab === "lessons") return <LessonList {...props} />;
-  if (tab === "lesson") return <LessonDetail {...props} />;
-  if (tab === "quizzes") return <QuizList {...props} />;
-  if (tab === "quiz") return <QuizTake {...props} />;
-  if (tab === "quiz-result") return <QuizResultView {...props} />;
-  if (tab === "scores") return <MyScores {...props} />;
+  if (tab === "lessons") return <LessonList {...studentProps} />;
+  if (tab === "lesson") return <LessonDetail {...studentProps} />;
+  if (tab === "quizzes") return <QuizList {...studentProps} />;
+  if (tab === "quiz") return <QuizTake {...studentProps} />;
+  if (tab === "quiz-result") return <QuizResultView {...studentProps} />;
+  if (tab === "scores") return <MyScores {...studentProps} />;
   return null;
 }
 
@@ -2494,12 +2809,12 @@ function LessonDetail({ setTab, activeLesson }) {
   );
 }
 
-function QuizList({ setTab, quizzes, setActiveQuiz, setQuizAnswers, studentUsername }) {
+function QuizList({ setTab, quizzes, setActiveQuiz, setQuizAnswers, studentUsername, studentSession }) {
   return (
     <div>
       <BackRow onBack={() => setTab("home")} title="Шалгалтууд" />
       {quizzes.length === 0 ? (
-        <EmptyState text="Одоогоор шалгалт нэмэгдээгүй байна." />
+        <EmptyState text={studentSession?.className ? `${studentSession.className} ангид одоогоор шалгалт алга.` : "Одоогоор шалгалт нэмэгдээгүй байна."} />
       ) : (
         <div className="grid sm:grid-cols-2 gap-3">
           {quizzes.map((q) => {
@@ -2549,18 +2864,18 @@ function QuizList({ setTab, quizzes, setActiveQuiz, setQuizAnswers, studentUsern
   );
 }
 
-function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz, studentUsername }) {
-  if (!activeQuiz) return null;
-  const questions = (activeQuiz.questions || []).map(normalizeQuestion);
+function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz, studentUsername, studentSession }) {
+  const questions = (activeQuiz?.questions || []).map(normalizeQuestion);
   const allAnswered = questions.every((_, i) => quizAnswers[i] !== undefined);
-  const durationMinutes = Number(activeQuiz.durationMinutes) > 0 ? Number(activeQuiz.durationMinutes) : 30;
+  const durationMinutes = Number(activeQuiz?.durationMinutes) > 0 ? Number(activeQuiz.durationMinutes) : 30;
   const [secondsLeft, setSecondsLeft] = useState(durationMinutes * 60);
   const submittedRef = useRef(false);
   const submitQuizRef = useRef(submitQuiz);
   submitQuizRef.current = submitQuiz;
+  const allowed = Boolean(activeQuiz) && (!studentSession || quizVisibleToStudent(activeQuiz, studentSession));
 
   useEffect(() => {
-    if (!activeQuiz?.isOpen) {
+    if (!activeQuiz?.isOpen || (studentSession && !quizVisibleToStudent(activeQuiz, studentSession))) {
       setTab("quizzes");
       return;
     }
@@ -2597,7 +2912,9 @@ function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz,
     tick();
     const id = setInterval(tick, 250);
     return () => clearInterval(id);
-  }, [activeQuiz?.id, activeQuiz?.isOpen, durationMinutes, studentUsername, setTab]);
+  }, [activeQuiz?.id, activeQuiz?.isOpen, activeQuiz?.classId, activeQuiz?.grade, activeQuiz?.forGrade, durationMinutes, studentUsername, studentSession, setTab]);
+
+  if (!activeQuiz || !allowed) return null;
 
   const urgent = secondsLeft <= 60;
 
