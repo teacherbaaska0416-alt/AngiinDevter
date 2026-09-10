@@ -25,6 +25,8 @@ import {
   Unlock,
   Bell,
   RotateCcw,
+  ZoomIn,
+  X,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
@@ -2957,6 +2959,92 @@ function NoticeModal({ title, text, onClose }) {
   );
 }
 
+function ImageLightbox({ src, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [onClose]);
+
+  if (!src) return null;
+  return (
+    <div
+      className="fixed inset-0 z-[90] flex items-center justify-center p-3 sm:p-6"
+      style={{ background: "rgba(22, 28, 45, 0.86)" }}
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Томруулсан зураг"
+    >
+      <button
+        type="button"
+        onClick={onClose}
+        className="absolute top-3 right-3 rounded-md p-2"
+        style={{ background: "#FBF9F2", color: "#24478F" }}
+        title="Хаах"
+        aria-label="Хаах"
+      >
+        <X size={18} />
+      </button>
+      <img
+        src={src}
+        alt=""
+        className="rounded-md object-contain shadow-lg"
+        style={{
+          maxHeight: "90vh",
+          maxWidth: "94vw",
+          background: "#FFFEFA",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      />
+    </div>
+  );
+}
+
+function ZoomableImage({ src, className, style, alt = "" }) {
+  const [open, setOpen] = useState(false);
+  if (!src) return null;
+  return (
+    <>
+      <span
+        role="button"
+        tabIndex={0}
+        onClick={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          setOpen(true);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.stopPropagation();
+            e.preventDefault();
+            setOpen(true);
+          }
+        }}
+        className="relative inline-block max-w-full align-top"
+        title="Дарж томруулж харна"
+        style={{ cursor: "zoom-in" }}
+      >
+        <img src={src} alt={alt} className={className} style={style} />
+        <span
+          className="absolute bottom-1 right-1 rounded p-0.5 pointer-events-none"
+          style={{ background: "rgba(36,71,143,0.88)", color: "#FBF9F2" }}
+        >
+          <ZoomIn size={12} />
+        </span>
+      </span>
+      {open ? <ImageLightbox src={src} onClose={() => setOpen(false)} /> : null}
+    </>
+  );
+}
+
 function NavCard({ icon, label, sub, onClick }) {
   return (
     <button onClick={onClick} className="cn-card rounded-xl p-5 text-left transition-transform hover:-translate-y-0.5">
@@ -3422,16 +3510,15 @@ function QuizImageField({ imageUrl, onUploaded, onClear, uploadFn, compact }) {
     <div className={compact ? "mt-1" : "mb-2"}>
       {imageUrl ? (
         <div className="relative inline-block mb-1 max-w-full">
-          <img
+          <ZoomableImage
             src={imageUrl}
-            alt=""
             className={"rounded-md object-contain border " + (compact ? "max-h-24" : "max-h-44")}
             style={{ borderColor: "#E3DCC8", background: "#FFFEFA" }}
           />
           <button
             type="button"
             onClick={onClear}
-            className="absolute top-1 right-1 rounded p-1"
+            className="absolute top-1 right-1 rounded p-1 z-10"
             style={{ background: "#FBE7E4", color: "#9A3324" }}
             title="Зураг хасах"
           >
@@ -3953,14 +4040,15 @@ function AttemptBreakdown({ details }) {
               </span>
             </div>
             {d.imageUrl ? (
-              <img
-                src={d.imageUrl}
-                alt=""
-                className="mb-2 max-h-28 rounded object-contain border"
-                style={{ borderColor: "#E3DCC8", background: "#FFFEFA" }}
-              />
+              <div className="mb-2">
+                <ZoomableImage
+                  src={d.imageUrl}
+                  className="max-h-28 rounded object-contain border"
+                  style={{ borderColor: "#E3DCC8", background: "#FFFEFA" }}
+                />
+              </div>
             ) : null}
-            <div className="text-xs space-y-1" style={{ color: "#6B6858" }}>
+            <div className="text-xs space-y-2" style={{ color: "#6B6858" }}>
               <div>
                 Сонгосон:{" "}
                 {d.unanswered ? (
@@ -3971,6 +4059,15 @@ function AttemptBreakdown({ details }) {
                     {d.chosenText || (d.chosenImageUrl ? "Зураг" : "—")}
                   </span>
                 )}
+                {d.chosenImageUrl ? (
+                  <div className="mt-1">
+                    <ZoomableImage
+                      src={d.chosenImageUrl}
+                      className="max-h-24 rounded object-contain border"
+                      style={{ borderColor: "#E3DCC8", background: "#FFFEFA" }}
+                    />
+                  </div>
+                ) : null}
               </div>
               <div>
                 Зөв хариулт:{" "}
@@ -3978,6 +4075,15 @@ function AttemptBreakdown({ details }) {
                   {d.correctLabel ? `${d.correctLabel}) ` : ""}
                   {d.correctText || (d.correctImageUrl ? "Зураг" : "—")}
                 </span>
+                {d.correctImageUrl ? (
+                  <div className="mt-1">
+                    <ZoomableImage
+                      src={d.correctImageUrl}
+                      className="max-h-24 rounded object-contain border"
+                      style={{ borderColor: "#E3DCC8", background: "#FFFEFA" }}
+                    />
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
@@ -4671,7 +4777,7 @@ function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz,
       <p className="text-xs mb-4" style={{ color: "#6B6858" }}>
         Нийт хугацаа: {durationMinutes} минут. Нийт {quizTotalPoints(questions)} оноо. Цаг дуусмагц автоматаар илгээнэ.
         Илгээх товч бүх асуултад хариулж, сүүлийн 5 минут үлдсэн үед идэвхжинэ.
-        Асуулт болон хариултын дараалал сурагч бүрт өөр байна.
+        Асуулт болон хариултын дараалал сурагч бүрт өөр байна. Зураг дээр дарж томруулж харна.
       </p>
       <div className="space-y-4">
         {questions.map((q, qi) => (
@@ -4688,19 +4794,28 @@ function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz,
               </span>
             </div>
             {q.imageUrl ? (
-              <img
-                src={q.imageUrl}
-                alt=""
-                className="mb-3 max-h-56 rounded-md object-contain border"
-                style={{ borderColor: "#E3DCC8", background: "#FFFEFA" }}
-              />
+              <div className="mb-3">
+                <ZoomableImage
+                  src={q.imageUrl}
+                  className="max-h-56 rounded-md object-contain border"
+                  style={{ borderColor: "#E3DCC8", background: "#FFFEFA" }}
+                />
+              </div>
             ) : null}
             <div className="grid sm:grid-cols-2 gap-2">
               {q.options.map((opt, oi) => (
-                <button
+                <div
                   key={oi}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setQuizAnswers((a) => ({ ...a, [qi]: oi }))}
-                  className={"cn-option rounded-md px-3 py-2 text-left text-sm flex items-start gap-2" + (quizAnswers[qi] === oi ? " selected" : "")}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setQuizAnswers((a) => ({ ...a, [qi]: oi }));
+                    }
+                  }}
+                  className={"cn-option rounded-md px-3 py-2 text-left text-sm flex items-start gap-2 cursor-pointer" + (quizAnswers[qi] === oi ? " selected" : "")}
                 >
                   <span
                     className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold mt-0.5"
@@ -4714,16 +4829,17 @@ function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz,
                   <span className="min-w-0 flex-1">
                     {opt.text ? <span className="block">{opt.text}</span> : null}
                     {opt.imageUrl ? (
-                      <img
-                        src={opt.imageUrl}
-                        alt=""
-                        className="mt-1 max-h-28 rounded object-contain border"
-                        style={{ borderColor: "#E3DCC8", background: "#FFFEFA" }}
-                      />
+                      <span className="mt-1 inline-block max-w-full">
+                        <ZoomableImage
+                          src={opt.imageUrl}
+                          className="max-h-28 rounded object-contain border"
+                          style={{ borderColor: "#E3DCC8", background: "#FFFEFA" }}
+                        />
+                      </span>
                     ) : null}
                     {!opt.text && !opt.imageUrl ? <span style={{ color: "#6B6858" }}>—</span> : null}
                   </span>
-                </button>
+                </div>
               ))}
             </div>
           </div>
