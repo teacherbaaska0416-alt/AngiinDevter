@@ -375,6 +375,15 @@ function emptyQuizForm() {
   };
 }
 
+function quizFormIsDirty(form, editingId) {
+  if (editingId) return true;
+  if (String(form?.title || "").trim()) return true;
+  return (form?.questions || []).some((q) => {
+    const nq = normalizeQuestion(q);
+    return questionHasContent(nq) || nq.options.some(optionHasContent);
+  });
+}
+
 function parseGradeFromClassName(name) {
   const m = String(name || "").match(/^(\d{1,2})/);
   if (!m) return null;
@@ -971,6 +980,7 @@ export default function ClassroomApp() {
   const [lessonForm, setLessonForm] = useState({ title: "", subject: "", content: "" });
   const [quizForm, setQuizForm] = useState(emptyQuizForm);
   const [editingQuizId, setEditingQuizId] = useState(null);
+  const [quizEditorOpen, setQuizEditorOpen] = useState(false);
   const [classForm, setClassForm] = useState({ grade: 7, section: "А" });
 
   const mapLesson = (l) => ({ id: l.id, title: l.title, subject: l.subject, content: l.content, createdAt: new Date(l.created_at).getTime() });
@@ -1076,6 +1086,71 @@ export default function ClassroomApp() {
       return f;
     });
   }, [subjects, editingQuizId]);
+
+  useEffect(() => {
+    const onPageShow = (e) => {
+      if (!e.persisted) return;
+      if (role !== "teacher") return;
+      setTeacherTab("home");
+      setQuizEditorOpen(false);
+      setEditingQuizId(null);
+      setQuizForm(emptyQuizForm());
+    };
+    const onBeforeUnload = (e) => {
+      if (role !== "teacher" || !quizEditorOpen) return;
+      if (!quizFormIsDirty(quizForm, editingQuizId)) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("pageshow", onPageShow);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      window.removeEventListener("pageshow", onPageShow);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [role, quizEditorOpen, quizForm, editingQuizId]);
+
+  useEffect(() => {
+    if (role !== "teacher") return undefined;
+
+    const applyHash = () => {
+      const raw = (window.location.hash || "").replace(/^#\/?/, "");
+      if (!raw || raw === "home") {
+        setTeacherTab("home");
+        setQuizEditorOpen(false);
+        return;
+      }
+      if (raw === "quiz/edit") {
+        setTeacherTab("quiz");
+        setQuizEditorOpen(false);
+        return;
+      }
+      if (raw === "quiz" || raw === "class" || raw === "lesson" || raw === "results") {
+        setTeacherTab(raw);
+        setQuizEditorOpen(false);
+        return;
+      }
+      setTeacherTab("home");
+      setQuizEditorOpen(false);
+    };
+
+    applyHash();
+    window.addEventListener("hashchange", applyHash);
+    return () => window.removeEventListener("hashchange", applyHash);
+  }, [role]);
+
+  useEffect(() => {
+    if (role !== "teacher") return;
+    let next = "#/home";
+    if (teacherTab === "quiz" && quizEditorOpen) next = "#/quiz/edit";
+    else if (teacherTab === "quiz") next = "#/quiz";
+    else if (teacherTab === "class") next = "#/class";
+    else if (teacherTab === "lesson") next = "#/lesson";
+    else if (teacherTab === "results") next = "#/results";
+    if (window.location.hash !== next) {
+      history.replaceState(null, "", `${window.location.pathname}${window.location.search}${next}`);
+    }
+  }, [role, teacherTab, quizEditorOpen]);
 
   useEffect(() => {
     if (!supabase) return undefined;
@@ -2035,6 +2110,12 @@ export default function ClassroomApp() {
     }
     setStudentLoginRequest(null);
     setRole(null);
+    setQuizEditorOpen(false);
+    try {
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+    } catch {
+      // ignore
+    }
     setShowTeacherLogin(false);
     setShowNamePrompt(false);
     setTeacherLoginError("");
@@ -2046,6 +2127,7 @@ export default function ClassroomApp() {
     setNameInput("");
     setTeacherTab("home");
     setStudentTab("home");
+    setQuizEditorOpen(false);
     setActiveLesson(null);
     setActiveQuiz(null);
     setQuizAnswers({});
@@ -2310,6 +2392,8 @@ export default function ClassroomApp() {
               editingQuizId={editingQuizId}
               startEditQuiz={startEditQuiz}
               resetQuizForm={resetQuizForm}
+              quizEditorOpen={quizEditorOpen}
+              setQuizEditorOpen={setQuizEditorOpen}
               deleteQuiz={deleteQuiz}
               setQuizOpen={setQuizOpen}
               quizFormValid={quizFormValid()}
@@ -3159,6 +3243,8 @@ function QuizBuilder({
   editingQuizId,
   startEditQuiz,
   resetQuizForm,
+  quizEditorOpen = false,
+  setQuizEditorOpen,
   quizzes,
   deleteQuiz,
   setQuizOpen,
@@ -3168,7 +3254,8 @@ function QuizBuilder({
   subjects = [],
 }) {
   const fileRef = useRef(null);
-  const [showForm, setShowForm] = useState(false);
+  const showForm = Boolean(quizEditorOpen);
+  const setShowForm = (open) => setQuizEditorOpen?.(Boolean(open));
   const [importMsg, setImportMsg] = useState("");
   const [importLoading, setImportLoading] = useState(false);
   const [saving, setSaving] = useState(false);
