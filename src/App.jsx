@@ -24,6 +24,7 @@ import {
   Lock,
   Unlock,
   Bell,
+  RotateCcw,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
@@ -703,15 +704,16 @@ function groupAttemptsByQuiz(attempts, quizzes, students) {
 
 function exportQuizGradebook(group) {
   const cols = group.columns;
-  const header1 = ["№", "Сурагчийн нэр", ...cols.map((c) => c.index + 1), "авах", "авсан", "Гүйцэтгэл", "Түвшин"];
-  const header2 = ["", "Даалгаврын оноо", ...cols.map((c) => c.points), "", "", "", ""];
+  const header1 = ["№", "Сурагчийн нэр", "Оролдлого", ...cols.map((c) => c.index + 1), "авах", "авсан", "Гүйцэтгэл", "Түвшин"];
+  const header2 = ["", "Даалгаврын оноо", "", ...cols.map((c) => c.points), "", "", "", ""];
   const body = group.rows.map((a, i) => {
     const earned = earnedByQuestion(a, cols, group.quiz);
     const hasCells = earned.some((v) => v != null);
     const max = cols.reduce((s, c) => s + c.points, 0) || a.total || 0;
     const got = hasCells ? earned.reduce((s, v) => s + (Number(v) || 0), 0) : a.score;
     const pct = max > 0 ? (got / max) * 100 : 0;
-    return [i + 1, a.studentName, ...earned.map((v) => (v == null ? "" : v)), max, got, Number(pct.toFixed(1)), performanceLevel(pct)];
+    const tries = attemptCountForRow(group.attempts, a, null);
+    return [i + 1, a.studentName, tries, ...earned.map((v) => (v == null ? "" : v)), max, got, Number(pct.toFixed(1)), performanceLevel(pct)];
   });
   const n = group.rows.length;
   const colPossible = cols.map((c) => c.points * n);
@@ -721,14 +723,15 @@ function exportQuizGradebook(group) {
       return s + (Number(earned[ci]) || 0);
     }, 0)
   );
-  const totalPossibleAll = body.reduce((s, r) => s + (Number(r[2 + cols.length]) || 0), 0);
-  const totalEarnedAll = body.reduce((s, r) => s + (Number(r[3 + cols.length]) || 0), 0);
+  const totalPossibleAll = body.reduce((s, r) => s + (Number(r[3 + cols.length]) || 0), 0);
+  const totalEarnedAll = body.reduce((s, r) => s + (Number(r[4 + cols.length]) || 0), 0);
   const overallPct = totalPossibleAll > 0 ? Number(((totalEarnedAll / totalPossibleAll) * 100).toFixed(1)) : 0;
-  const footer1 = ["", "Авах оноо", ...colPossible, totalPossibleAll, "", "", ""];
-  const footer2 = ["", "Авсан оноо", ...colEarned, "", totalEarnedAll, "", ""];
+  const footer1 = ["", "Авах оноо", "", ...colPossible, totalPossibleAll, "", "", ""];
+  const footer2 = ["", "Авсан оноо", "", ...colEarned, "", totalEarnedAll, "", ""];
   const footer3 = [
     "",
     "Гүйцэтгэл",
+    "",
     ...colPossible.map((p, i) => (p > 0 ? Number(((colEarned[i] / p) * 100).toFixed(1)) : 0)),
     "",
     "",
@@ -816,6 +819,74 @@ function quizDeadlineKey(quizId, username) {
 
 function quizShuffleKey(quizId, username) {
   return `quiz-shuffle:${quizId}:${username || "anon"}`;
+}
+
+function studentIdentityNames(student) {
+  const names = [];
+  if (student?.name) names.push(student.name);
+  if (student?.username) names.push(student.username);
+  const full = fullStudentName(student?.lastName, student?.firstName);
+  if (full) names.push(full);
+  return [...new Set(names.filter(Boolean))];
+}
+
+function attemptMatchesStudent(attempt, student) {
+  if (!attempt || !student) return false;
+  return studentIdentityNames(student).includes(attempt.studentName);
+}
+
+function attemptMatchesSession(attempt, session, studentName) {
+  if (!attempt) return false;
+  const names = new Set(studentIdentityNames(session));
+  if (studentName) names.add(studentName);
+  return names.has(attempt.studentName);
+}
+
+function studentAttemptsForQuiz(attempts, quiz, session, studentName) {
+  if (!quiz?.id) return [];
+  return (attempts || []).filter((a) => a.quizId === quiz.id && attemptMatchesSession(a, session, studentName));
+}
+
+function pendingRetakeGrant(grants, quizId, studentId) {
+  if (!quizId || !studentId) return null;
+  return (grants || []).find((g) => g.quizId === quizId && g.studentId === studentId && !g.consumedAt) || null;
+}
+
+function hasInProgressQuiz(quizId, username) {
+  try {
+    const deadline = Number(sessionStorage.getItem(quizDeadlineKey(quizId, username)));
+    return Boolean(deadline && !Number.isNaN(deadline) && deadline > Date.now());
+  } catch {
+    return false;
+  }
+}
+
+function mapRetakeGrant(g) {
+  return {
+    id: g.id,
+    quizId: g.quiz_id,
+    studentId: g.student_id,
+    grantedAt: g.granted_at ? new Date(g.granted_at).getTime() : 0,
+    consumedAt: g.consumed_at ? new Date(g.consumed_at).getTime() : null,
+  };
+}
+
+function findStudentForAttempt(students, attempt) {
+  return (students || []).find((s) => attemptMatchesStudent(attempt, s)) || null;
+}
+
+function attemptCountForRow(allAttempts, attempt, student) {
+  const names = student ? studentIdentityNames(student) : [attempt?.studentName].filter(Boolean);
+  return (allAttempts || []).filter((a) => names.includes(a.studentName)).length;
+}
+
+function retakeSqlMissing(error) {
+  const msg = error?.message || "";
+  return (
+    error?.code === "42P01" ||
+    error?.code === "PGRST202" ||
+    /quiz_retake_grants|consume_quiz_retake_grant|schema cache|does not exist/i.test(msg)
+  );
 }
 
 function shuffleArray(items) {
@@ -963,6 +1034,7 @@ export default function ClassroomApp() {
   const [classes, setClasses] = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [students, setStudents] = useState([]);
+  const [retakeGrants, setRetakeGrants] = useState([]);
   const [activeClassId, setActiveClassId] = useState(null);
   const [studentLastNameInput, setStudentLastNameInput] = useState("");
   const [studentFirstNameInput, setStudentFirstNameInput] = useState("");
@@ -1032,13 +1104,14 @@ export default function ClassroomApp() {
       return;
     }
     try {
-      const [lessonsRes, quizzesRes, attemptsRes, classesRes, studentsRes, subjectsRes] = await Promise.all([
+      const [lessonsRes, quizzesRes, attemptsRes, classesRes, studentsRes, subjectsRes, grantsRes] = await Promise.all([
         supabase.from("lessons").select("*").order("created_at", { ascending: false }),
         supabase.from("quizzes").select("*").order("created_at", { ascending: false }),
         supabase.from("attempts").select("*").order("date", { ascending: false }),
         supabase.from("classes").select("*").order("created_at", { ascending: false }),
         supabase.from("students").select("*").order("student_no", { ascending: true }),
         supabase.from("subjects").select("*").order("created_at", { ascending: true }),
+        supabase.from("quiz_retake_grants").select("*").order("granted_at", { ascending: false }),
       ]);
       if (lessonsRes.error || quizzesRes.error || attemptsRes.error) {
         throw lessonsRes.error || quizzesRes.error || attemptsRes.error;
@@ -1060,6 +1133,11 @@ export default function ClassroomApp() {
         setSubjects((subjectsRes.data || []).map(mapSubject));
       } else {
         setSubjects([]);
+      }
+      if (!grantsRes.error) {
+        setRetakeGrants((grantsRes.data || []).map(mapRetakeGrant));
+      } else {
+        setRetakeGrants([]);
       }
     } catch (e) {
       setSaveError("Дата ачаалахад алдаа гарлаа. Supabase тохиргоогоо шалгана уу.");
@@ -1097,6 +1175,11 @@ export default function ClassroomApp() {
       setQuizForm(emptyQuizForm());
     };
     const onBeforeUnload = (e) => {
+      if (role === "student" && studentTab === "quiz") {
+        e.preventDefault();
+        e.returnValue = "";
+        return;
+      }
       if (role !== "teacher" || !quizEditorOpen) return;
       if (!quizFormIsDirty(quizForm, editingQuizId)) return;
       e.preventDefault();
@@ -1108,7 +1191,7 @@ export default function ClassroomApp() {
       window.removeEventListener("pageshow", onPageShow);
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
-  }, [role, quizEditorOpen, quizForm, editingQuizId]);
+  }, [role, quizEditorOpen, quizForm, editingQuizId, studentTab]);
 
   useEffect(() => {
     if (role !== "teacher") return undefined;
@@ -1230,10 +1313,27 @@ export default function ClassroomApp() {
       })
       .subscribe();
 
-    const pollId = setInterval(refreshOpenFlags, 2000);
+    const refreshRetakeGrants = async () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      const { data, error } = await supabase
+        .from("quiz_retake_grants")
+        .select("*")
+        .order("granted_at", { ascending: false });
+      if (cancelled || error) return;
+      setRetakeGrants((data || []).map(mapRetakeGrant));
+    };
+
+    const pollId = setInterval(() => {
+      refreshOpenFlags();
+      refreshRetakeGrants();
+    }, 2000);
     refreshOpenFlags();
+    refreshRetakeGrants();
     const onVis = () => {
-      if (document.visibilityState === "visible") refreshOpenFlags();
+      if (document.visibilityState === "visible") {
+        refreshOpenFlags();
+        refreshRetakeGrants();
+      }
     };
     document.addEventListener("visibilitychange", onVis);
 
@@ -1244,6 +1344,22 @@ export default function ClassroomApp() {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  useEffect(() => {
+    if (!supabase || role !== "teacher" || teacherTab !== "results") return undefined;
+    let cancelled = false;
+    const tick = async () => {
+      const { data, error } = await supabase.from("attempts").select("*").order("date", { ascending: false });
+      if (cancelled || error || !data) return;
+      setAttempts(data.map(mapAttempt));
+    };
+    const id = setInterval(tick, 3000);
+    tick();
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [role, teacherTab]);
 
   useEffect(() => {
     if (!activeQuiz?.id) return;
@@ -1781,9 +1897,74 @@ export default function ClassroomApp() {
       }
     }
     if (!isOpen) return;
+
+    const inProgress = hasInProgressQuiz(quiz.id, studentSession?.username);
+    let takenCount = studentAttemptsForQuiz(attempts, quiz, studentSession, studentName).length;
+    let grant = pendingRetakeGrant(retakeGrants, quiz.id, studentSession?.id);
+    if (supabase) {
+      const names = [...new Set([...studentIdentityNames(studentSession), studentName].filter(Boolean))];
+      if (names.length) {
+        const { data: attRows } = await supabase
+          .from("attempts")
+          .select("id, student_name, quiz_id")
+          .eq("quiz_id", quiz.id)
+          .in("student_name", names);
+        if (attRows) takenCount = attRows.length;
+      }
+      if (studentSession?.id && takenCount > 0 && !inProgress && !grant) {
+        const { data: grantRow } = await supabase
+          .from("quiz_retake_grants")
+          .select("*")
+          .eq("quiz_id", quiz.id)
+          .eq("student_id", studentSession.id)
+          .is("consumed_at", null)
+          .maybeSingle();
+        if (grantRow) {
+          grant = mapRetakeGrant(grantRow);
+          setRetakeGrants((prev) => (prev.some((g) => g.id === grant.id) ? prev : [grant, ...prev]));
+        }
+      }
+    }
+    if (takenCount > 0 && !inProgress && !grant) {
+      setSaveError("Энэ шалгалтыг аль хэдийн өгсөн байна. Дахин өгөхийн тулд багшаасаа зөвшөөрөл авна уу.");
+      return;
+    }
+    setSaveError("");
     setActiveQuiz(loadOrCreateStudentQuiz({ ...quiz, isOpen: true }, studentSession?.username));
     setQuizAnswers({});
     setStudentTab("quiz");
+  }
+
+  async function grantQuizRetake(quizId, studentId) {
+    if (!quizId || !studentId || !supabase) return;
+    const { data, error } = await supabase
+      .from("quiz_retake_grants")
+      .insert({ quiz_id: quizId, student_id: studentId })
+      .select()
+      .single();
+    if (error) {
+      if (error.code === "23505") {
+        const { data: existing } = await supabase
+          .from("quiz_retake_grants")
+          .select("*")
+          .eq("quiz_id", quizId)
+          .eq("student_id", studentId)
+          .is("consumed_at", null)
+          .maybeSingle();
+        if (existing) {
+          const mapped = mapRetakeGrant(existing);
+          setRetakeGrants((prev) => (prev.some((g) => g.id === mapped.id) ? prev : [mapped, ...prev]));
+        }
+        return;
+      }
+      if (retakeSqlMissing(error)) {
+        setSaveError("Дахин өгөх хүснэгт байхгүй. Supabase SQL Editor-т supabase-quiz-retake.sql-ийг Run хийнэ үү.");
+      } else {
+        setSaveError("Дахин өгөх зөвшөөрөл олгоход алдаа гарлаа.");
+      }
+      return;
+    }
+    setRetakeGrants((prev) => [mapRetakeGrant(data), ...prev.filter((g) => g.id !== data.id)]);
   }
 
   async function addClass() {
@@ -1972,6 +2153,8 @@ export default function ClassroomApp() {
     if (!force && !questions.every((_, i) => quizAnswers[i] !== undefined)) return;
 
     submittingQuizRef.current = true;
+    const priorAttempts = studentAttemptsForQuiz(attempts, activeQuiz, studentSession, studentName);
+    const isRetake = priorAttempts.length > 0;
     let score = 0;
     questions.forEach((q, i) => {
       if (quizAnswers[i] === q.correct) score += questionPoints(q);
@@ -1997,6 +2180,25 @@ export default function ClassroomApp() {
         setSaveError("Үр дүн хадгалахад алдаа гарлаа.");
       } else {
         setAttempts((prev) => [mapAttempt(data), ...prev]);
+        if (isRetake && studentSession?.id) {
+          const { error: consumeError } = await supabase.rpc("consume_quiz_retake_grant", {
+            p_quiz_id: activeQuiz.id,
+            p_student_id: studentSession.id,
+          });
+          if (consumeError) {
+            if (retakeSqlMissing(consumeError)) {
+              setSaveError("Үр дүн хадгалагдсан. Дахин өгөх функцийг идэвхжүүлэхийн тулд supabase-quiz-retake.sql-ийг Run хийнэ үү.");
+            }
+          } else {
+            setRetakeGrants((prev) =>
+              prev.map((g) =>
+                g.quizId === activeQuiz.id && g.studentId === studentSession.id && !g.consumedAt
+                  ? { ...g, consumedAt: Date.now() }
+                  : g
+              )
+            );
+          }
+        }
       }
       try {
         sessionStorage.removeItem(quizDeadlineKey(activeQuiz.id, studentSession?.username));
@@ -2349,6 +2551,7 @@ export default function ClassroomApp() {
             studentUsername={studentSession?.username}
             studentClassName={studentSession?.className}
             teacherEmail={teacherUser?.email}
+            exitLocked={role === "student" && studentTab === "quiz"}
             onExit={exitToRoleSelect}
           />
           {saveError && (
@@ -2375,6 +2578,8 @@ export default function ClassroomApp() {
               deleteSubject={deleteSubject}
               quizzes={quizzes}
               attempts={allAttemptsSorted}
+              retakeGrants={retakeGrants}
+              grantQuizRetake={grantQuizRetake}
               classes={classes}
               lessonForm={lessonForm}
               setLessonForm={setLessonForm}
@@ -2437,6 +2642,7 @@ export default function ClassroomApp() {
               startStudentQuiz={startStudentQuiz}
               studentUsername={studentSession?.username || ""}
               studentSession={studentSession}
+              retakeGrants={retakeGrants}
             />
           )}
         </div>
@@ -2688,12 +2894,32 @@ function LoginRequestBanner({ requests, busyId, onApprove, onReject }) {
   );
 }
 
-function TopBar({ role, studentName, studentUsername, studentClassName, teacherEmail, onExit }) {
+function TopBar({ role, studentName, studentUsername, studentClassName, teacherEmail, onExit, exitLocked }) {
+  const [warn, setWarn] = useState(false);
   return (
     <div className="flex items-center justify-between mb-6">
-      <button onClick={onExit} className="flex items-center gap-1.5 text-sm" style={{ color: "#6B6858" }}>
-        <ArrowLeft size={16} /> Гарах
+      <button
+        type="button"
+        onClick={() => {
+          if (exitLocked) {
+            setWarn(true);
+            return;
+          }
+          onExit();
+        }}
+        className="flex items-center gap-1.5 text-sm"
+        style={{ color: exitLocked ? "#A39E8C" : "#6B6858", cursor: exitLocked ? "not-allowed" : "pointer" }}
+        title={exitLocked ? "Шалгалт үргэлжилж байна" : "Гарах"}
+      >
+        {exitLocked ? <Lock size={16} /> : <ArrowLeft size={16} />} Гарах
       </button>
+      {warn ? (
+        <NoticeModal
+          title="Шалгалт үргэлжилж байна"
+          text="Шалгалт эхэлсэн тул одоо гарах боломжгүй. Шалгалтыг дуусгах эсвэл хугацаа дуусахыг хүлээнэ үү."
+          onClose={() => setWarn(false)}
+        />
+      ) : null}
       <div className="flex items-center gap-2">
         {role === "student" && (
           <span className="text-sm text-right" style={{ color: "#6B6858" }}>
@@ -2712,6 +2938,20 @@ function TopBar({ role, studentName, studentUsername, studentClassName, teacherE
           </span>
         )}
         <span className="cn-tag">{role === "teacher" ? "Багшийн горим" : "Сурагчийн горим"}</span>
+      </div>
+    </div>
+  );
+}
+
+function NoticeModal({ title, text, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: "rgba(43,42,37,0.35)" }}>
+      <div className="cn-card rounded-xl p-5 w-full max-w-sm">
+        <div className="font-semibold mb-2" style={{ color: "#24478F" }}>{title}</div>
+        <p className="text-sm mb-4" style={{ color: "#6B6858" }}>{text}</p>
+        <button type="button" onClick={onClose} className="cn-btn-primary w-full rounded-md py-2 text-sm font-medium">
+          Ойлголоо
+        </button>
       </div>
     </div>
   );
@@ -3747,9 +3987,11 @@ function AttemptBreakdown({ details }) {
   );
 }
 
-function QuizAnalysisView({ group, openKey, setOpenKey }) {
+function QuizAnalysisView({ group, openKey, setOpenKey, students = [], retakeGrants = [], grantQuizRetake }) {
   const cols = group.columns;
   const n = group.rows.length;
+  const [grantBusy, setGrantBusy] = useState(null);
+  const quizId = group.quizId && !String(group.quizId).startsWith("title:") ? group.quizId : null;
   const colPossible = cols.map((c) => c.points * n);
   const colEarned = cols.map((c, ci) =>
     group.rows.reduce((s, a) => s + (Number(earnedByQuestion(a, cols, group.quiz)[ci]) || 0), 0)
@@ -3805,6 +4047,7 @@ function QuizAnalysisView({ group, openKey, setOpenKey }) {
               <tr>
                 <th className="text-center cn-sticky-num">№</th>
                 <th className="text-left cn-sticky-name">Сурагчийн нэр</th>
+                <th className="text-center">Оролдлого</th>
                 {cols.map((c) => (
                   <th key={c.index} className="text-center" title={c.text || `Даалгавар ${c.index + 1}`}>
                     <span className="cn-qnum">{c.index + 1}</span>
@@ -3814,14 +4057,17 @@ function QuizAnalysisView({ group, openKey, setOpenKey }) {
                 <th className="text-center">Авсан</th>
                 <th className="text-center">Гүйцэтгэл</th>
                 <th className="text-center">Түвшин</th>
+                <th className="text-center">Дахин өгөх</th>
               </tr>
               <tr>
                 <th className="cn-sticky-num" />
                 <th className="text-left cn-sticky-name" style={{ fontWeight: 500 }}>Даалгаврын оноо</th>
+                <th />
                 {cols.map((c) => (
                   <th key={c.index} className="text-center">{c.points}</th>
                 ))}
                 <th className="cn-sep" />
+                <th />
                 <th />
                 <th />
                 <th />
@@ -3831,6 +4077,9 @@ function QuizAnalysisView({ group, openKey, setOpenKey }) {
               {rowData.map(({ a, i, earned, max, got, pct, level }) => {
                 const key = `${group.key}:${a.studentName}`;
                 const open = openKey === key;
+                const student = findStudentForAttempt(students, a);
+                const tries = attemptCountForRow(group.attempts, a, student);
+                const pending = student?.id ? pendingRetakeGrant(retakeGrants, quizId, student.id) : null;
                 return (
                   <tr
                     key={a.id}
@@ -3840,6 +4089,14 @@ function QuizAnalysisView({ group, openKey, setOpenKey }) {
                   >
                     <td className="text-center cn-sticky-num" style={{ color: "#6B6858" }}>{i + 1}</td>
                     <td className="font-medium cn-sticky-name">{a.studentName}</td>
+                    <td className="text-center">
+                      <span
+                        className="cn-tag"
+                        style={tries >= 2 ? { background: "#FBE7E4", color: "#9A3324" } : undefined}
+                      >
+                        {tries} удаа
+                      </span>
+                    </td>
                     {earned.map((v, ci) => {
                       const full = v != null && v === cols[ci].points && cols[ci].points > 0;
                       const zero = v === 0;
@@ -3860,6 +4117,29 @@ function QuizAnalysisView({ group, openKey, setOpenKey }) {
                     <td className="text-center">
                       <span className="cn-level">{level}</span>
                     </td>
+                    <td className="text-center" onClick={(e) => e.stopPropagation()}>
+                      {pending ? (
+                        <span className="cn-tag" style={{ background: "#EAEFF8", color: "#24478F" }}>
+                          Зөвшөөрсөн
+                        </span>
+                      ) : student?.id && quizId && grantQuizRetake ? (
+                        <button
+                          type="button"
+                          disabled={grantBusy === student.id}
+                          onClick={async () => {
+                            setGrantBusy(student.id);
+                            await grantQuizRetake(quizId, student.id);
+                            setGrantBusy(null);
+                          }}
+                          className="cn-btn-secondary rounded-md px-2 py-1 text-xs font-medium inline-flex items-center gap-1 disabled:opacity-40"
+                        >
+                          <RotateCcw size={12} />
+                          {grantBusy === student.id ? "..." : "Дахин өгүүлэх"}
+                        </button>
+                      ) : (
+                        <span style={{ color: "#D8D0BA" }}>—</span>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -3868,6 +4148,7 @@ function QuizAnalysisView({ group, openKey, setOpenKey }) {
               <tr>
                 <td className="cn-sticky-num" />
                 <td className="cn-sticky-name">Авах оноо</td>
+                <td />
                 {colPossible.map((v, i) => (
                   <td key={i} className="text-center">{v}</td>
                 ))}
@@ -3875,10 +4156,12 @@ function QuizAnalysisView({ group, openKey, setOpenKey }) {
                 <td />
                 <td />
                 <td />
+                <td />
               </tr>
               <tr>
                 <td className="cn-sticky-num" />
                 <td className="cn-sticky-name">Авсан оноо</td>
+                <td />
                 {colEarned.map((v, i) => (
                   <td key={i} className="text-center">{v}</td>
                 ))}
@@ -3886,10 +4169,12 @@ function QuizAnalysisView({ group, openKey, setOpenKey }) {
                 <td className="text-center">{totalEarnedAll}</td>
                 <td />
                 <td />
+                <td />
               </tr>
               <tr>
                 <td className="cn-sticky-num" />
                 <td className="cn-sticky-name">Гүйцэтгэл</td>
+                <td />
                 {colPossible.map((p, i) => {
                   const pct = p > 0 ? (colEarned[i] / p) * 100 : 0;
                   return (
@@ -3907,6 +4192,7 @@ function QuizAnalysisView({ group, openKey, setOpenKey }) {
                     {overallPct.toFixed(1)}%
                   </span>
                 </td>
+                <td />
                 <td />
               </tr>
             </tfoot>
@@ -3934,7 +4220,7 @@ function QuizAnalysisView({ group, openKey, setOpenKey }) {
   );
 }
 
-function ResultsTable({ setTab, attempts, quizzes = [], students = [], classes = [] }) {
+function ResultsTable({ setTab, attempts, quizzes = [], students = [], classes = [], retakeGrants = [], grantQuizRetake }) {
   const [selectedClassId, setSelectedClassId] = useState(null);
   const [selectedQuizId, setSelectedQuizId] = useState(null);
   const [openKey, setOpenKey] = useState(null);
@@ -4023,7 +4309,18 @@ function ResultsTable({ setTab, attempts, quizzes = [], students = [], classes =
           }}
           title={group?.quizTitle || "Шалгалтын анализ"}
         />
-        {group ? <QuizAnalysisView group={group} openKey={openKey} setOpenKey={setOpenKey} /> : <EmptyState text="Шалгалт олдсонгүй." />}
+        {group ? (
+          <QuizAnalysisView
+            group={group}
+            openKey={openKey}
+            setOpenKey={setOpenKey}
+            students={students}
+            retakeGrants={retakeGrants}
+            grantQuizRetake={grantQuizRetake}
+          />
+        ) : (
+          <EmptyState text="Шалгалт олдсонгүй." />
+        )}
       </div>
     );
   }
@@ -4128,7 +4425,14 @@ function ResultsTable({ setTab, attempts, quizzes = [], students = [], classes =
         }}
         title={selectedQuizItem.quiz.title}
       />
-      <QuizAnalysisView group={group} openKey={openKey} setOpenKey={setOpenKey} />
+      <QuizAnalysisView
+        group={group}
+        openKey={openKey}
+        setOpenKey={setOpenKey}
+        students={classStudents}
+        retakeGrants={retakeGrants}
+        grantQuizRetake={grantQuizRetake}
+      />
     </div>
   );
 }
@@ -4196,7 +4500,7 @@ function LessonDetail({ setTab, activeLesson }) {
   );
 }
 
-function QuizList({ setTab, quizzes, startStudentQuiz, studentSession }) {
+function QuizList({ setTab, quizzes, startStudentQuiz, studentSession, myAttempts = [], retakeGrants = [] }) {
   return (
     <div>
       <BackRow onBack={() => setTab("home")} title="Шалгалтууд" />
@@ -4206,27 +4510,32 @@ function QuizList({ setTab, quizzes, startStudentQuiz, studentSession }) {
         <div className="grid sm:grid-cols-2 gap-3">
           {quizzes.map((q) => {
             const open = Boolean(q.isOpen);
+            const inProgress = hasInProgressQuiz(q.id, studentSession?.username);
+            const takenCount = studentAttemptsForQuiz(myAttempts, q, studentSession, studentSession?.name).length;
+            const grant = pendingRetakeGrant(retakeGrants, q.id, studentSession?.id);
+            const canStart = open && (inProgress || takenCount === 0 || Boolean(grant));
+            const takenLocked = takenCount > 0 && !inProgress && !grant;
             return (
               <button
                 key={q.id}
                 type="button"
-                disabled={!open}
+                disabled={!canStart}
                 onClick={() => {
-                  if (!open) return;
+                  if (!canStart) return;
                   startStudentQuiz?.(q);
                 }}
-                className={"cn-card rounded-lg p-4 text-left transition-transform " + (open ? "hover:-translate-y-0.5" : "opacity-70 cursor-not-allowed")}
+                className={"cn-card rounded-lg p-4 text-left transition-transform " + (canStart ? "hover:-translate-y-0.5" : "opacity-70 cursor-not-allowed")}
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="cn-tag">{q.subject}</span>
                   <span
                     className="text-xs font-semibold px-2 py-0.5 rounded"
                     style={{
-                      background: open ? "#E4F0E9" : "#FBE7E4",
-                      color: open ? "#2F6F4E" : "#9A3324",
+                      background: grant && open ? "#EAEFF8" : open && !takenLocked ? "#E4F0E9" : "#FBE7E4",
+                      color: grant && open ? "#24478F" : open && !takenLocked ? "#2F6F4E" : "#9A3324",
                     }}
                   >
-                    {open ? "Нээлттэй" : "Хаалттай"}
+                    {grant && open ? "Дахин өгөх" : takenLocked ? "Өгсөн" : open ? "Нээлттэй" : "Хаалттай"}
                   </span>
                 </div>
                 <div className="font-semibold mt-2">{q.title}</div>
@@ -4238,6 +4547,21 @@ function QuizList({ setTab, quizzes, startStudentQuiz, studentSession }) {
                 {!open && (
                   <div className="text-xs mt-2 flex items-center gap-1" style={{ color: "#9A3324" }}>
                     <Lock size={12} /> Багш шалгалтыг эхлүүлээгүй байна
+                  </div>
+                )}
+                {open && takenLocked && (
+                  <div className="text-xs mt-2 flex items-center gap-1" style={{ color: "#9A3324" }}>
+                    <Lock size={12} /> Өгсөн. Дахин өгөхийн тулд багш зөвшөөрнө
+                  </div>
+                )}
+                {open && grant && !inProgress && (
+                  <div className="text-xs mt-2" style={{ color: "#24478F" }}>
+                    Багш дахин өгөхийг зөвшөөрсөн
+                  </div>
+                )}
+                {inProgress && open && (
+                  <div className="text-xs mt-2" style={{ color: "#24478F" }}>
+                    Үргэлжлүүлэх
                   </div>
                 )}
               </button>
@@ -4254,6 +4578,7 @@ function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz,
   const allAnswered = questions.every((_, i) => quizAnswers[i] !== undefined);
   const durationMinutes = Number(activeQuiz?.durationMinutes) > 0 ? Number(activeQuiz.durationMinutes) : 30;
   const [secondsLeft, setSecondsLeft] = useState(durationMinutes * 60);
+  const [leaveWarn, setLeaveWarn] = useState(false);
   const submittedRef = useRef(false);
   const submitQuizRef = useRef(submitQuiz);
   submitQuizRef.current = submitQuiz;
@@ -4332,7 +4657,17 @@ function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz,
         </div>
       </div>
 
-      <BackRow onBack={() => setTab("quizzes")} title={activeQuiz.title} />
+      <BackRow
+        onBack={() => setLeaveWarn(true)}
+        title={activeQuiz.title}
+      />
+      {leaveWarn ? (
+        <NoticeModal
+          title="Шалгалт үргэлжилж байна"
+          text="Шалгалт эхэлсэн тул буцах боломжгүй. Шалгалтыг дуусгах эсвэл хугацаа дуусахыг хүлээнэ үү."
+          onClose={() => setLeaveWarn(false)}
+        />
+      ) : null}
       <p className="text-xs mb-4" style={{ color: "#6B6858" }}>
         Нийт хугацаа: {durationMinutes} минут. Нийт {quizTotalPoints(questions)} оноо. Цаг дуусмагц автоматаар илгээнэ.
         Илгээх товч бүх асуултад хариулж, сүүлийн 5 минут үлдсэн үед идэвхжинэ.
@@ -4432,10 +4767,9 @@ function QuizResultView({ setTab, quizResult, activeQuiz }) {
           : quizResult.timedOut
             ? "Хугацаа дууссан тул шалгалт автоматаар илгээгдлээ. "
             : ""}
-        {good ? "Сайн байна! Үргэлжлүүлээрэй." : "Дахин давтаад үзээрэй."} — {activeQuiz?.title}
+        {good ? "Сайн байна! Үргэлжлүүлээрэй." : "Үр дүнгээ нүүр хуудаснаас харна уу."} — {activeQuiz?.title}
       </p>
       <div className="flex gap-3 mt-5">
-        <button onClick={() => setTab("quizzes")} className="cn-btn-secondary rounded-md px-4 py-2 text-sm">Шалгалтууд руу буцах</button>
         <button onClick={() => setTab("home")} className="cn-btn-primary rounded-md px-4 py-2 text-sm">Нүүр хуудас</button>
       </div>
     </div>

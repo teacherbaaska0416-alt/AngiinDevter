@@ -19,9 +19,10 @@
 13. Шалгалт эхлүүлэх/хаах товч сурагчид шууд харагдахын тулд **нэмж** `supabase-quiz-realtime.sql`-ийг Run хийнэ.
 14. Сурагч нэвтрэхэд багш зөвшөөрөхийн тулд **нэмж** `supabase-student-login-approval.sql`-ийг Run хийнэ.
 15. Багш өөрийн хичээлийн жагсаалт үүсгэхийн тулд **нэмж** `supabase-subjects.sql`-ийг Run хийнэ.
-16. **Authentication → Providers → Email** идэвхтэй эсэхийг шалгана.
-17. **Authentication → Users → Add user** дарж багшийн имэйл, нууц үг үүсгэнэ (эсвэл апп дээр бүртгүүлэхийг зөвшөөрнө).
-18. Зүүн талын цэснээс **Project Settings → API** руу орж, дараах 2 утгыг хуулж ав:
+16. Сурагч шалгалтыг нэг удаа өгч, багш зөвшөөрсөн үед дахин өгөхийн тулд **нэмж** `supabase-quiz-retake.sql`-ийг Run хийнэ.
+17. **Authentication → Providers → Email** идэвхтэй эсэхийг шалгана.
+18. **Authentication → Users → Add user** дарж багшийн имэйл, нууц үг үүсгэнэ (эсвэл апп дээр бүртгүүлэхийг зөвшөөрнө).
+19. Зүүн талын цэснээс **Project Settings → API** руу орж, дараах 2 утгыг хуулж ав:
    - **Project URL** (жишээ нь `https://xxxxx.supabase.co`)
    - **anon public key**
 
@@ -105,6 +106,7 @@ angiin-devter/
 ├── supabase-student-login.sql ← Сурагч нэвтрэх нэрээр нэвтрэх RPC
 ├── supabase-student-login-approval.sql ← Нэвтрэхэд багшийн зөвшөөрөл
 ├── supabase-subjects.sql      ← Багшийн заах хичээлийн жагсаалт
+├── supabase-quiz-retake.sql   ← Шалгалтыг дахин өгөх багшийн зөвшөөрөл
 ├── supabase-quiz-images.sql   ← Шалгалтын зураг Storage bucket
 ├── supabase-quiz-timing.sql   ← Шалгалтын хугацаа + нээх/хаах
 ├── supabase-quiz-class.sql    ← Шалгалтыг анги/түвшинд харуулах
