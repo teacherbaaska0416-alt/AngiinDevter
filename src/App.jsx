@@ -4310,6 +4310,9 @@ function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz,
   if (!activeQuiz.isOpen) return null;
 
   const urgent = secondsLeft <= 60;
+  const inLastFiveMinutes = secondsLeft <= 5 * 60;
+  const canSubmit = allAnswered && inLastFiveMinutes;
+  const unansweredCount = questions.reduce((n, _, i) => n + (quizAnswers[i] === undefined ? 1 : 0), 0);
 
   return (
     <div>
@@ -4332,6 +4335,7 @@ function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz,
       <BackRow onBack={() => setTab("quizzes")} title={activeQuiz.title} />
       <p className="text-xs mb-4" style={{ color: "#6B6858" }}>
         Нийт хугацаа: {durationMinutes} минут. Нийт {quizTotalPoints(questions)} оноо. Цаг дуусмагц автоматаар илгээнэ.
+        Илгээх товч бүх асуултад хариулж, сүүлийн 5 минут үлдсэн үед идэвхжинэ.
         Асуулт болон хариултын дараалал сурагч бүрт өөр байна.
       </p>
       <div className="space-y-4">
@@ -4390,9 +4394,23 @@ function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz,
           </div>
         ))}
       </div>
-      <button onClick={() => submitQuiz()} disabled={!allAnswered} className="cn-btn-primary rounded-md px-5 py-2.5 text-sm font-medium mt-5 disabled:opacity-40">
-        Шалгалт дуусгах
-      </button>
+      <div className="mt-5">
+        <button
+          onClick={() => submitQuiz()}
+          disabled={!canSubmit}
+          className="cn-btn-primary rounded-md px-5 py-2.5 text-sm font-medium disabled:opacity-40 inline-flex items-center gap-2"
+        >
+          <Clock size={16} />
+          Шалгалт дуусгах
+          <span className="tabular-nums font-semibold">{formatCountdown(secondsLeft)}</span>
+        </button>
+        {!canSubmit ? (
+          <p className="text-xs mt-2" style={{ color: "#6B6858" }}>
+            {!allAnswered ? `Бүрэн хариулаагүй асуулт: ${unansweredCount}. ` : ""}
+            {!inLastFiveMinutes ? "Илгээх товч сүүлийн 5 минут үлдсэн үед идэвхжинэ." : "Бүх асуултад хариулсны дараа илгээнэ."}
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }
