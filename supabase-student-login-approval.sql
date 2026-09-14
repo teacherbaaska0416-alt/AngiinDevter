@@ -68,19 +68,47 @@ declare
   cname text;
   existing uuid;
   new_id uuid;
+  display_name text;
+  q text;
 begin
-  if p_username is null or length(trim(p_username)) = 0 then
+  q := lower(trim(both from coalesce(p_username, '')));
+  if q = '' then
     return json_build_object('ok', false, 'error', 'not_found');
+  end if;
+  if left(q, 1) = '@' then
+    q := substr(q, 2);
   end if;
 
   select *
     into s
   from students
-  where lower(username) = lower(trim(p_username))
+  where lower(trim(username)) = q
+  order by created_at asc
   limit 1;
 
   if s.id is null then
+    if (
+      select count(*)
+      from students
+      where lower(trim(coalesce(name, ''))) = q
+         or lower(trim(both from concat_ws(' ', last_name, first_name))) = q
+    ) = 1 then
+      select *
+        into s
+      from students
+      where lower(trim(coalesce(name, ''))) = q
+         or lower(trim(both from concat_ws(' ', last_name, first_name))) = q
+      limit 1;
+    end if;
+  end if;
+
+  if s.id is null then
     return json_build_object('ok', false, 'error', 'not_found');
+  end if;
+
+  display_name := nullif(trim(both from concat_ws(' ', nullif(trim(s.last_name), ''), nullif(trim(s.first_name), ''))), '');
+  if display_name is null then
+    display_name := coalesce(nullif(trim(s.name), ''), s.username);
   end if;
 
   select name into cname from classes where id = s.class_id;
@@ -102,11 +130,16 @@ begin
   limit 1;
 
   if existing is not null then
+    update student_login_requests
+       set student_name = display_name,
+           class_name = coalesce(cname, class_name),
+           username = s.username
+     where id = existing;
     return json_build_object(
       'ok', true,
       'request_id', existing,
       'status', 'pending',
-      'student_name', coalesce(nullif(s.name, ''), trim(both from concat_ws(' ', s.last_name, s.first_name))),
+      'student_name', display_name,
       'class_name', coalesce(cname, ''),
       'username', s.username
     );
@@ -120,7 +153,7 @@ begin
     s.class_id,
     cl.teacher_id,
     s.username,
-    coalesce(nullif(s.name, ''), trim(both from concat_ws(' ', s.last_name, s.first_name))),
+    display_name,
     coalesce(cl.name, ''),
     'pending'
   from classes cl
@@ -135,7 +168,7 @@ begin
     'ok', true,
     'request_id', new_id,
     'status', 'pending',
-    'student_name', coalesce(nullif(s.name, ''), trim(both from concat_ws(' ', s.last_name, s.first_name))),
+    'student_name', display_name,
     'class_name', coalesce(cname, ''),
     'username', s.username
   );

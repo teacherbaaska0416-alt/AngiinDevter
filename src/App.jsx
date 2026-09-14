@@ -39,8 +39,9 @@ const LETTERS = ["А", "Б", "В", "Г", "Д", "Е"];
 const GRADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 const CLASS_SECTIONS = ["А", "Б", "В", "Г", "Д", "Е"];
 
-const LAST_NAME_HEADERS = ["овог", "овог нэр", "surname", "last name", "lastname", "family name"];
-const FIRST_NAME_HEADERS = ["нэр", "өөрийн нэр", "given name", "first name", "firstname", "name"];
+const LAST_NAME_HEADERS = ["овог", "surname", "last name", "lastname", "family name"];
+const FIRST_NAME_HEADERS = ["өөрийн нэр", "given name", "first name", "firstname", "нэр"];
+const FULL_NAME_HEADERS = ["овог нэр", "сурагчийн нэр", "сурагч", "full name", "fullname", "student name", "student"];
 const NO_HEADERS = ["№", "но", "no", "дугаар", "дэс", "дэс дугаар", "number", "student_no", "student no", "#"];
 
 const CYR_TO_LAT = {
@@ -65,7 +66,9 @@ function normalizeHeader(h) {
 }
 
 function findColumnKey(keys, candidates) {
-  const normalized = keys.map((k) => ({ raw: k, norm: normalizeHeader(k) }));
+  const normalized = keys
+    .map((k) => ({ raw: k, norm: normalizeHeader(k) }))
+    .filter((k) => !/нэвтрэх|эцэг|username|login|email|и-?мэйл|имэйл/.test(k.norm));
   for (const cand of candidates) {
     const hit = normalized.find((k) => k.norm === cand);
     if (hit) return hit.raw;
@@ -126,7 +129,7 @@ function missingStudentColumn(error) {
   return m ? m[1] : null;
 }
 
-const STUDENT_OPTIONAL_COLUMNS = ["student_no", "username", "first_name", "last_name"];
+const STUDENT_OPTIONAL_COLUMNS = ["student_no", "first_name", "last_name", "username"];
 
 async function insertStudentFlexible(client, row, usernamePool) {
   const payload = { ...row };
@@ -179,6 +182,28 @@ function fullStudentName(lastName, firstName) {
   return `${String(lastName || "").trim()} ${String(firstName || "").trim()}`.trim();
 }
 
+function splitFullStudentName(raw) {
+  const parts = String(raw || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length >= 2) return { lastName: parts[0], firstName: parts.slice(1).join(" ") };
+  if (parts.length === 1) return { lastName: "Овог", firstName: parts[0] };
+  return { lastName: "", firstName: "" };
+}
+
+function isFullNameHeader(key) {
+  const n = normalizeHeader(key);
+  return FULL_NAME_HEADERS.some((h) => n === h || n.includes(h)) || (n.includes("овог") && n.includes("нэр"));
+}
+
+function studentDisplayName(student) {
+  if (!student) return "";
+  const fromParts = fullStudentName(student.lastName, student.firstName);
+  if (fromParts && student.lastName && student.lastName !== "Овог") return fromParts;
+  return student.name || fromParts || student.username || "";
+}
+
 function sortStudents(list) {
   return [...list].sort(
     (a, b) =>
@@ -192,46 +217,49 @@ function sortStudents(list) {
 function parseStudentsFromSheet(rows) {
   if (!rows?.length) return [];
   const keys = Object.keys(rows[0] || {});
+  const fullKey = keys.find((k) => isFullNameHeader(k)) || findColumnKey(keys, FULL_NAME_HEADERS);
   let lastKey = findColumnKey(keys, LAST_NAME_HEADERS);
   let firstKey = findColumnKey(keys, FIRST_NAME_HEADERS);
-  // «нэр» багана овогтой давхцахгүй байх: firstKey нь lastKey биш байх
-  if (firstKey && lastKey && firstKey === lastKey) {
-    firstKey = keys.find((k) => k !== lastKey && FIRST_NAME_HEADERS.some((h) => normalizeHeader(k).includes(h) || normalizeHeader(k) === h)) || null;
+  if (lastKey && isFullNameHeader(lastKey)) lastKey = null;
+  if (firstKey && lastKey && firstKey === lastKey) firstKey = null;
+  if (fullKey && (fullKey === lastKey || fullKey === firstKey) && !(lastKey && firstKey && lastKey !== firstKey)) {
+    lastKey = null;
+    firstKey = null;
   }
-  // Зөвхөн «Нэр» байвал бүхлэх нэр гэж үзээд задлана
-  const legacyNameKey = !lastKey && !firstKey
-    ? findColumnKey(keys, ["овог нэр", "сурагч", "сурагчийн нэр", "student", "full name", "fullname", "нэр", "name"])
-    : null;
   const noKey = findColumnKey(keys, NO_HEADERS);
+  const nameKey = lastKey || firstKey ? null : fullKey || findColumnKey(keys, ["нэр", "name"]);
 
   const out = [];
   const seen = new Set();
   rows.forEach((row) => {
     let lastName = "";
     let firstName = "";
-    if (lastKey || firstKey) {
+    if (lastKey && firstKey && lastKey !== firstKey) {
       lastName = String(row[lastKey] ?? "").trim();
       firstName = String(row[firstKey] ?? "").trim();
-      if (lastName && !firstName) {
-        const parts = lastName.split(/\s+/);
-        if (parts.length >= 2) {
-          lastName = parts[0];
-          firstName = parts.slice(1).join(" ");
-        }
-      }
-    } else if (legacyNameKey) {
-      const raw = String(row[legacyNameKey] ?? "").trim();
-      if (!raw) return;
-      const parts = raw.split(/\s+/);
-      if (parts.length >= 2) {
-        lastName = parts[0];
-        firstName = parts.slice(1).join(" ");
-      } else {
-        lastName = "Овог";
-        firstName = raw;
-      }
+    } else if (lastKey && !firstKey) {
+      const split = splitFullStudentName(row[lastKey]);
+      lastName = split.lastName;
+      firstName = split.firstName;
+    } else if (firstKey && !lastKey) {
+      const split = splitFullStudentName(row[firstKey]);
+      lastName = split.lastName;
+      firstName = split.firstName;
+    } else if (nameKey) {
+      const split = splitFullStudentName(row[nameKey]);
+      lastName = split.lastName;
+      firstName = split.firstName;
     } else {
       return;
+    }
+    if (lastName && !firstName) {
+      const split = splitFullStudentName(lastName);
+      lastName = split.lastName;
+      firstName = split.firstName;
+    } else if (firstName && !lastName) {
+      const split = splitFullStudentName(firstName);
+      lastName = split.lastName;
+      firstName = split.firstName;
     }
     if (!lastName || !firstName) return;
     if (LAST_NAME_HEADERS.includes(normalizeHeader(lastName)) || FIRST_NAME_HEADERS.includes(normalizeHeader(firstName))) return;
@@ -1144,16 +1172,28 @@ export default function ClassroomApp() {
     teacherId: c.teacher_id,
     createdAt: new Date(c.created_at).getTime(),
   });
-  const mapStudent = (s) => ({
-    id: s.id,
-    classId: s.class_id,
-    lastName: s.last_name || "",
-    firstName: s.first_name || "",
-    name: s.name || fullStudentName(s.last_name, s.first_name),
-    username: s.username || "",
-    studentNo: s.student_no,
-    createdAt: new Date(s.created_at).getTime(),
-  });
+  const mapStudent = (s) => {
+    const lastName = s.last_name || "";
+    const firstName = s.first_name || "";
+    const name = s.name || fullStudentName(lastName, firstName);
+    let last = lastName;
+    let first = firstName;
+    if ((!last || !first) && name) {
+      const split = splitFullStudentName(name);
+      if (!last) last = split.lastName;
+      if (!first) first = split.firstName;
+    }
+    return {
+      id: s.id,
+      classId: s.class_id,
+      lastName: last,
+      firstName: first,
+      name,
+      username: s.username || "",
+      studentNo: s.student_no,
+      createdAt: new Date(s.created_at).getTime(),
+    };
+  };
   const mapAttempt = (a) => ({
     id: a.id,
     studentName: a.student_name,
@@ -2675,6 +2715,8 @@ export default function ClassroomApp() {
             <>
               <LoginRequestBanner
                 requests={loginRequests}
+                students={students}
+                classes={classes}
                 busyId={loginDecideBusy}
                 onApprove={(id) => decideLoginRequest(id, true)}
                 onReject={(id) => decideLoginRequest(id, false)}
@@ -2958,7 +3000,7 @@ function RoleSelect({
   );
 }
 
-function LoginRequestBanner({ requests, busyId, onApprove, onReject }) {
+function LoginRequestBanner({ requests, students = [], classes = [], busyId, onApprove, onReject }) {
   if (!requests?.length) return null;
   return (
     <div className="cn-card rounded-xl p-4 mb-5">
@@ -2969,36 +3011,47 @@ function LoginRequestBanner({ requests, busyId, onApprove, onReject }) {
         </span>
       </div>
       <div className="space-y-2 max-h-72 overflow-y-auto">
-        {requests.map((r) => (
-          <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2" style={{ background: "#FFFEFA", border: "1px solid #E3DCC8" }}>
-            <div className="min-w-0">
-              <div className="text-sm font-medium">{r.studentName}</div>
-              <div className="text-xs" style={{ color: "#6B6858" }}>
-                {r.className ? `${r.className} анги · ` : ""}@{r.username}
-                {r.createdAt ? ` · ${fmtDate(r.createdAt)}` : ""}
+        {requests.map((r) => {
+          const student = (students || []).find((s) => s.id === r.studentId) || null;
+          const className =
+            (student && (classes || []).find((c) => c.id === student.classId)?.name) || r.className || "";
+          const name = studentDisplayName(student) || r.studentName || r.username;
+          const username = student?.username || r.username;
+          const no = student?.studentNo;
+          return (
+            <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2" style={{ background: "#FFFEFA", border: "1px solid #E3DCC8" }}>
+              <div className="min-w-0">
+                <div className="text-sm font-medium">
+                  {no != null ? `${no}. ` : ""}
+                  {name}
+                </div>
+                <div className="text-xs" style={{ color: "#6B6858" }}>
+                  {className ? `${className} анги · ` : ""}@{username}
+                  {r.createdAt ? ` · ${fmtDate(r.createdAt)}` : ""}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={busyId === r.id}
+                  onClick={() => onReject(r.id)}
+                  className="cn-btn-secondary rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-40"
+                >
+                  Татгалзах
+                </button>
+                <button
+                  type="button"
+                  disabled={busyId === r.id}
+                  onClick={() => onApprove(r.id)}
+                  className="cn-btn-primary rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-40 flex items-center gap-1"
+                >
+                  {busyId === r.id ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                  Зөвшөөрөх
+                </button>
               </div>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                disabled={busyId === r.id}
-                onClick={() => onReject(r.id)}
-                className="cn-btn-secondary rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-40"
-              >
-                Татгалзах
-              </button>
-              <button
-                type="button"
-                disabled={busyId === r.id}
-                onClick={() => onApprove(r.id)}
-                className="cn-btn-primary rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-40 flex items-center gap-1"
-              >
-                {busyId === r.id ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-                Зөвшөөрөх
-              </button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -3373,7 +3426,7 @@ function ClassBuilder({
                   </span>
                   <div className="min-w-0">
                     <div className="text-sm font-medium truncate">
-                      {s.lastName} {s.firstName}
+                      {studentDisplayName(s)}
                     </div>
                     <div className="flex items-center gap-1.5 mt-0.5">
                       <span className="text-xs" style={{ color: "#6B6858" }}>Нэвтрэх нэр:</span>
