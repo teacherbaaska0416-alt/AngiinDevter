@@ -104,6 +104,77 @@ function makeUsername(lastName, firstName, existingUsernames) {
   return candidate;
 }
 
+function studentErrorText(error) {
+  return `${error?.code || ""} ${error?.message || ""} ${error?.details || ""} ${error?.hint || ""}`;
+}
+
+function studentTableMissing(error) {
+  const msg = studentErrorText(error);
+  return error?.code === "42P01" || /relation ["']?students["']? does not exist/i.test(msg);
+}
+
+function studentColumnsMissing(error) {
+  const msg = studentErrorText(error);
+  if (error?.code === "PGRST204") return true;
+  if (/schema cache/i.test(msg)) return true;
+  return /could not find the '[^']+' column/i.test(msg);
+}
+
+function missingStudentColumn(error) {
+  const msg = error?.message || "";
+  const m = msg.match(/Could not find the '([^']+)' column/i) || msg.match(/column "([^"]+)" of relation/i);
+  return m ? m[1] : null;
+}
+
+const STUDENT_OPTIONAL_COLUMNS = ["student_no", "username", "first_name", "last_name"];
+
+async function insertStudentFlexible(client, row, usernamePool) {
+  const payload = { ...row };
+  const pool = [...(usernamePool || [])];
+  for (let i = 0; i < 30; i += 1) {
+    const { data, error } = await client.from("students").insert(payload).select().single();
+    if (!error) return { data };
+    if (studentUsernameTaken(error) && payload.username) {
+      pool.push(payload.username);
+      payload.username = makeUsername(row.last_name || "", row.first_name || "", pool);
+      pool.push(payload.username);
+      continue;
+    }
+    if (error?.code === "23505") return { skipped: true };
+    if (error?.code === "23502" && /(last_name|first_name|username)/i.test(studentErrorText(error))) {
+      return { error, cacheStale: true };
+    }
+    const col = missingStudentColumn(error);
+    if (col && Object.prototype.hasOwnProperty.call(payload, col)) {
+      delete payload[col];
+      continue;
+    }
+    if (studentColumnsMissing(error)) {
+      const next = STUDENT_OPTIONAL_COLUMNS.find((k) => Object.prototype.hasOwnProperty.call(payload, k));
+      if (next) {
+        delete payload[next];
+        continue;
+      }
+    }
+    return { error };
+  }
+  return { error: { message: "insert failed" } };
+}
+
+function studentUsernameTaken(error) {
+  const msg = studentErrorText(error);
+  return error?.code === "23505" && /username/i.test(msg);
+}
+
+function studentNameTaken(error) {
+  const msg = studentErrorText(error);
+  return error?.code === "23505" && /(last_name|first_name|class_name|class_id_name)/i.test(msg);
+}
+
+function studentSchemaHelp() {
+  return "Сурагчийн багана олдсонгүй эсвэл schema cache хуучирсан байна. Supabase SQL Editor-т supabase-students-v2.sql-ийг Run хийгээд хэдэн секунд хүлээнэ үү.";
+}
+
 function fullStudentName(lastName, firstName) {
   return `${String(lastName || "").trim()} ${String(firstName || "").trim()}`.trim();
 }
@@ -2036,23 +2107,24 @@ export default function ClassroomApp() {
       username,
       student_no: studentNo ?? null,
     };
-    const { data, error } = await supabase.from("students").insert(payload).select().single();
-    if (error) {
-      if (error.code === "42P01" || error.message?.includes("does not exist")) {
+    const res = await insertStudentFlexible(supabase, payload, pool);
+    if (res.skipped) return { ok: false, duplicate: true };
+    if (res.error) {
+      if (studentTableMissing(res.error)) {
         setSaveError("Сурагчдын хүснэгт байхгүй байна. Supabase SQL Editor-т supabase-students.sql (эсвэл supabase-students-v2.sql)-ийг Run хийнэ үү.");
-      } else if (error.code === "23505") {
-        return { ok: false, duplicate: true };
-      } else if (error.message?.includes("last_name") || error.message?.includes("username")) {
-        setSaveError("Сурагчийн багана шинэчлэгдээгүй байна. Supabase SQL Editor-т supabase-students-v2.sql-ийг Run хийнэ үү.");
-      } else if (error.code === "42501" || error.message?.includes("policy")) {
+      } else if (res.cacheStale) {
+        setSaveError("API schema cache хуучирсан байна. SQL Editor-т notify pgrst, 'reload schema'; гэж Run хийнэ үү.");
+      } else if (studentColumnsMissing(res.error)) {
+        setSaveError(studentSchemaHelp());
+      } else if (res.error.code === "42501" || res.error.message?.includes("policy")) {
         setSaveError("Эрх хүрэлцэхгүй байна. Багшаар нэвтэрсэн эсэхээ шалгана уу.");
       } else {
         setSaveError("Сурагч хадгалахад алдаа гарлаа.");
       }
       return { ok: false };
     }
-    setStudents((prev) => sortStudents([...prev, mapStudent(data)]));
-    return { ok: true, username };
+    setStudents((prev) => sortStudents([...prev, mapStudent(res.data)]));
+    return { ok: true, username: res.data?.username || username };
   }
 
   async function addStudentManual() {
@@ -2106,25 +2178,61 @@ export default function ClassroomApp() {
           student_no: p.studentNo,
         };
       });
+
+      let inserted = [];
+      let extraSkipped = 0;
       const { data, error } = await supabase.from("students").insert(rows).select();
-      if (error) {
-        if (error.code === "42P01" || error.message?.includes("does not exist")) {
-          setSaveError("Сурагчдын хүснэгт байхгүй байна. Supabase SQL Editor-т supabase-students.sql-ийг Run хийнэ үү.");
-        } else if (error.message?.includes("last_name") || error.message?.includes("username")) {
-          setSaveError("Сурагчийн багана шинэчлэгдээгүй байна. Supabase SQL Editor-т supabase-students-v2.sql-ийг Run хийнэ үү.");
-        } else {
-          setSaveError("Excel-ээс сурагч оруулахад алдаа гарлаа.");
-        }
+      if (!error) {
+        inserted = data || [];
+      } else if (studentTableMissing(error)) {
+        setSaveError("Сурагчдын хүснэгт байхгүй байна. Supabase SQL Editor-т supabase-students.sql-ийг Run хийнэ үү.");
         setStudentImportLoading(false);
         return;
+      } else if (error.code === "42501" || error.message?.includes("policy")) {
+        setSaveError("Эрх хүрэлцэхгүй байна. Багшаар нэвтэрсэн эсэхээ шалгана уу.");
+        setStudentImportLoading(false);
+        return;
+      } else {
+        for (const row of rows) {
+          const res = await insertStudentFlexible(supabase, row, usernamePool);
+          if (res.data?.username) usernamePool.push(res.data.username);
+          if (res.skipped) {
+            extraSkipped += 1;
+            continue;
+          }
+          if (res.error) {
+            if (res.cacheStale) {
+              setSaveError("API schema cache хуучирсан байна. SQL Editor-т notify pgrst, 'reload schema'; гэж Run хийнэ үү.");
+            } else if (studentColumnsMissing(res.error)) {
+              setSaveError(studentSchemaHelp());
+            } else {
+              setSaveError("Excel-ээс сурагч оруулахад алдаа гарлаа.");
+            }
+            setStudentImportLoading(false);
+            return;
+          }
+          if (res.data) inserted.push(res.data);
+        }
       }
-      const mapped = (data || []).map(mapStudent);
-      setStudents((prev) => sortStudents([...prev, ...mapped]));
-      setStudentImportMsg(
-        skipped > 0
-          ? `${mapped.length} сурагч нэмэгдлээ (нэвтрэх нэр автоматаар үүссэн), ${skipped} давхардсаныг алгаслаа.`
-          : `${mapped.length} сурагч Excel-ээс амжилттай нэмэгдлээ. Нэвтрэх нэр автоматаар үүссэн.`
-      );
+
+      const mapped = inserted.map(mapStudent);
+      if (mapped.length) {
+        setStudents((prev) => sortStudents([...prev, ...mapped]));
+      }
+      const totalSkipped = skipped + extraSkipped;
+      if (!mapped.length) {
+        setStudentImportMsg(
+          totalSkipped > 0
+            ? `Шинэ сурагч нэмэгдсэнгүй. ${totalSkipped} сурагч аль хэдийн бүртгэлтэй байна.`
+            : "Excel-ээс сурагч оруулахад алдаа гарлаа."
+        );
+      } else {
+        setStudentImportMsg(
+          totalSkipped > 0
+            ? `${mapped.length} сурагч нэмэгдлээ (нэвтрэх нэр автоматаар үүссэн), ${totalSkipped} давхардсаныг алгаслаа.`
+            : `${mapped.length} сурагч Excel-ээс амжилттай нэмэгдлээ. Нэвтрэх нэр автоматаар үүссэн.`
+        );
+      }
     } catch {
       setStudentImportMsg("Excel файл уншихад алдаа гарлаа. .xlsx эсвэл .xls формат ашиглана уу.");
     }
