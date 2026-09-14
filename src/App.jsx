@@ -94,15 +94,27 @@ function slugifyMn(text) {
   return s || "x";
 }
 
-/** Овог.Нэр → bat.saraa ; давхцвал bat.saraa2 */
-function makeUsername(lastName, firstName, existingUsernames) {
-  const base = `${slugifyMn(lastName)}.${slugifyMn(firstName)}`.replace(/^\.|\.$/g, "") || "suragch";
+/** 7А-12 → 7a-12 ; давхвал овог нэмнэ (7a-12-bat). Арын 2, 3 гэж нэмэхгүй. */
+function makeUsername(lastName, firstName, existingUsernames, extras = {}) {
   const taken = new Set([...(existingUsernames || [])].map((u) => String(u).toLowerCase()));
-  let candidate = base;
-  let n = 2;
+  const cls = slugifyMn(String(extras.className || "").replace(/\s+/g, "")).replace(/[^a-z0-9]/g, "") || "angi";
+  const no = Number(extras.studentNo) > 0 ? String(Math.floor(Number(extras.studentNo))) : "";
+  const last = slugifyMn(lastName);
+  const first = slugifyMn(firstName);
+  const candidates = [
+    no ? `${cls}-${no}` : null,
+    no ? `${cls}-${no}-${last}` : null,
+    `${cls}-${last}-${first}`,
+    no ? `${cls}-${no}-${last}-${first}` : null,
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+  let token = makeJoinCode().slice(0, 3).toLowerCase();
+  let candidate = `${cls}-${no || last}-${token}`;
   while (taken.has(candidate.toLowerCase())) {
-    candidate = `${base}${n}`;
-    n += 1;
+    token = makeJoinCode().slice(0, 4).toLowerCase();
+    candidate = `${cls}-${no || last}-${token}`;
   }
   return candidate;
 }
@@ -131,15 +143,16 @@ function missingStudentColumn(error) {
 
 const STUDENT_OPTIONAL_COLUMNS = ["student_no", "first_name", "last_name", "username"];
 
-async function insertStudentFlexible(client, row, usernamePool) {
+async function insertStudentFlexible(client, row, usernamePool, meta = {}) {
   const payload = { ...row };
   const pool = [...(usernamePool || [])];
+  const usernameOpts = { studentNo: row.student_no, className: meta.className };
   for (let i = 0; i < 30; i += 1) {
     const { data, error } = await client.from("students").insert(payload).select().single();
     if (!error) return { data };
     if (studentUsernameTaken(error) && payload.username) {
       pool.push(payload.username);
-      payload.username = makeUsername(row.last_name || "", row.first_name || "", pool);
+      payload.username = makeUsername(row.last_name || "", row.first_name || "", pool, usernameOpts);
       pool.push(payload.username);
       continue;
     }
@@ -2137,8 +2150,9 @@ export default function ClassroomApp() {
     const ln = lastName.trim();
     const fn = firstName.trim();
     if (!classId || !ln || !fn) return { ok: false };
+    const cls = classes.find((c) => c.id === classId);
     const pool = usernamePool || students.map((s) => s.username).filter(Boolean);
-    const username = makeUsername(ln, fn, pool);
+    const username = makeUsername(ln, fn, pool, { studentNo, className: cls?.name });
     const payload = {
       class_id: classId,
       last_name: ln,
@@ -2147,7 +2161,7 @@ export default function ClassroomApp() {
       username,
       student_no: studentNo ?? null,
     };
-    const res = await insertStudentFlexible(supabase, payload, pool);
+    const res = await insertStudentFlexible(supabase, payload, pool, { className: cls?.name });
     if (res.skipped) return { ok: false, duplicate: true };
     if (res.error) {
       if (studentTableMissing(res.error)) {
@@ -2205,9 +2219,13 @@ export default function ClassroomApp() {
         setStudentImportLoading(false);
         return;
       }
+      const className = classes.find((c) => c.id === classId)?.name || "";
       const usernamePool = students.map((s) => s.username).filter(Boolean);
       const rows = toInsert.map((p) => {
-        const username = makeUsername(p.lastName, p.firstName, usernamePool);
+        const username = makeUsername(p.lastName, p.firstName, usernamePool, {
+          studentNo: p.studentNo,
+          className,
+        });
         usernamePool.push(username);
         return {
           class_id: classId,
@@ -2234,7 +2252,7 @@ export default function ClassroomApp() {
         return;
       } else {
         for (const row of rows) {
-          const res = await insertStudentFlexible(supabase, row, usernamePool);
+          const res = await insertStudentFlexible(supabase, row, usernamePool, { className });
           if (res.data?.username) usernamePool.push(res.data.username);
           if (res.skipped) {
             extraSkipped += 1;
@@ -2256,9 +2274,12 @@ export default function ClassroomApp() {
       }
 
       const mapped = inserted.map(mapStudent);
-      if (mapped.length) {
-        setStudents((prev) => sortStudents([...prev, ...mapped]));
-      }
+      const combined = sortStudents([
+        ...students.filter((s) => !mapped.some((m) => m.id === s.id)),
+        ...mapped,
+      ]);
+      if (mapped.length) setStudents(combined);
+      const rebuilt = mapped.length ? await rebuildClassUsernames(classId, combined) : { ok: true, updated: 0 };
       const totalSkipped = skipped + extraSkipped;
       if (!mapped.length) {
         setStudentImportMsg(
@@ -2268,15 +2289,48 @@ export default function ClassroomApp() {
         );
       } else {
         setStudentImportMsg(
-          totalSkipped > 0
-            ? `${mapped.length} сурагч нэмэгдлээ (нэвтрэх нэр автоматаар үүссэн), ${totalSkipped} давхардсаныг алгаслаа.`
-            : `${mapped.length} сурагч Excel-ээс амжилттай нэмэгдлээ. Нэвтрэх нэр автоматаар үүссэн.`
+          `${mapped.length} сурагч нэмэгдлээ. Нэвтрэх нэр: анги-дугаар (жишээ: ${slugifyMn(classes.find((c) => c.id === classId)?.name || "7a")}-12).` +
+            (totalSkipped > 0 ? ` ${totalSkipped} давхардсаныг алгаслаа.` : "") +
+            (rebuilt.updated ? ` ${rebuilt.updated} нэвтрэх нэр шинэчлэгдлээ.` : "")
         );
       }
     } catch {
       setStudentImportMsg("Excel файл уншихад алдаа гарлаа. .xlsx эсвэл .xls формат ашиглана уу.");
     }
     setStudentImportLoading(false);
+  }
+
+  async function rebuildClassUsernames(classId, listOverride) {
+    const cls = classes.find((c) => c.id === classId);
+    if (!cls || !supabase) return { ok: false, updated: 0 };
+    const source = listOverride || students;
+    const classList = sortStudents(source.filter((s) => s.classId === classId));
+    const pool = source.filter((s) => s.classId !== classId).map((s) => s.username).filter(Boolean);
+    const updates = [];
+    for (const s of classList) {
+      const username = makeUsername(s.lastName, s.firstName, pool, {
+        studentNo: s.studentNo,
+        className: cls.name,
+      });
+      pool.push(username);
+      if (username && username !== s.username) updates.push({ id: s.id, username });
+    }
+    for (const u of updates) {
+      const { error } = await supabase.from("students").update({ username: u.username }).eq("id", u.id);
+      if (error) {
+        if (error.code === "42501" || /policy/i.test(error.message || "")) {
+          setSaveError("Нэвтрэх нэр шинэчлэх эрх байхгүй. Supabase SQL Editor-т supabase-students-v2.sql-ийг Run хийнэ үү.");
+        } else {
+          setSaveError("Нэвтрэх нэр шинэчлэхэд алдаа гарлаа.");
+        }
+        return { ok: false, updated: 0 };
+      }
+    }
+    if (updates.length) {
+      const map = new Map(updates.map((u) => [u.id, u.username]));
+      setStudents((prev) => prev.map((s) => (map.has(s.id) ? { ...s, username: map.get(s.id) } : s)));
+    }
+    return { ok: true, updated: updates.length };
   }
 
   async function deleteStudent(id) {
@@ -2387,7 +2441,9 @@ export default function ClassroomApp() {
         setStudentLoginError(
           payload?.error === "no_class"
             ? "Энэ сурагч ангид холбогдоогүй байна."
-            : "Ийм нэвтрэх нэр бүртгэлгүй байна. Багшаасаа нэвтрэх нэрээ авна уу."
+            : payload?.error === "ambiguous"
+              ? "Энэ нэвтрэх нэр давхардсан байна. Багшаасаа шинэ нэвтрэх нэр (жишээ: 7a-12) авна уу."
+              : "Ийм нэвтрэх нэр бүртгэлгүй байна. Багшаасаа нэвтрэх нэрээ авна уу."
         );
         setStudentLoginLoading(false);
         return;
@@ -2768,6 +2824,7 @@ export default function ClassroomApp() {
               setStudentFirstNameInput={setStudentFirstNameInput}
               addStudentManual={addStudentManual}
               importStudentsFromExcel={importStudentsFromExcel}
+              rebuildClassUsernames={rebuildClassUsernames}
               deleteStudent={deleteStudent}
               studentImportMsg={studentImportMsg}
               setStudentImportMsg={setStudentImportMsg}
@@ -2964,7 +3021,7 @@ function RoleSelect({
           <input
             autoFocus
             className="cn-input w-full px-3 py-2 text-sm mb-2"
-            placeholder="Жишээ: bat.erdene"
+            placeholder="Жишээ: 7a-12"
             value={nameInput}
             onChange={(e) => setNameInput(e.target.value)}
             autoCapitalize="none"
@@ -2972,7 +3029,7 @@ function RoleSelect({
             spellCheck={false}
           />
           <p className="text-xs mb-4" style={{ color: "#6B6858" }}>
-            Нэвтрэх нэрээ оруулсны дараа багш зөвшөөрвөл нэвтэрнэ.
+            Багшийн өгсөн нэвтрэх нэрийг бичнэ (анги-дугаар, жишээ: 7a-12).
           </p>
           <button
             type="submit"
@@ -3287,6 +3344,7 @@ function ClassBuilder({
   setStudentFirstNameInput,
   addStudentManual,
   importStudentsFromExcel,
+  rebuildClassUsernames,
   deleteStudent,
   studentImportMsg,
   setStudentImportMsg,
@@ -3353,7 +3411,7 @@ function ClassBuilder({
             />
           </div>
           <p className="text-xs mb-3" style={{ color: "#6B6858" }}>
-            Нэвтрэх нэр автоматаар үүснэ (жишээ: <code>bat.erdene</code>).
+            Нэвтрэх нэр: <code>{slugifyMn(activeClass.name)}-12</code> (анги + дэс дугаар).
           </p>
           <button
             onClick={addStudentManual}
@@ -3411,6 +3469,28 @@ function ClassBuilder({
         <h3 className="text-sm font-semibold mb-3" style={{ color: "#6B6858" }}>
           Бүртгэлтэй сурагчид ({classStudents.length})
         </h3>
+        {classStudents.length > 0 ? (
+          <div className="mb-3">
+            <button
+              type="button"
+              disabled={studentImportLoading}
+              onClick={async () => {
+                setStudentImportMsg("");
+                const res = await rebuildClassUsernames?.(activeClass.id);
+                if (res?.ok) {
+                  setStudentImportMsg(
+                    res.updated
+                      ? `${res.updated} нэвтрэх нэр шинэчлэгдлээ (жишээ: ${slugifyMn(activeClass.name)}-12).`
+                      : "Нэвтрэх нэрс аль хэдийн шинэ форматтай байна."
+                  );
+                }
+              }}
+              className="cn-btn-secondary rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-40"
+            >
+              Нэвтрэх нэрийг шинэчлэх
+            </button>
+          </div>
+        ) : null}
         {classStudents.length === 0 ? (
           <EmptyState text="Одоогоор сурагч бүртгээгүй байна. Ганцаар нэмэх эсвэл Excel оруулна уу." />
         ) : (

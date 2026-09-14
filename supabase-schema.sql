@@ -168,6 +168,24 @@ create policy "Teachers delete class students" on students
     )
   );
 
+drop policy if exists "Teachers update class students" on students;
+create policy "Teachers update class students" on students
+  for update to authenticated
+  using (
+    exists (
+      select 1 from classes
+      where classes.id = students.class_id
+        and classes.teacher_id = auth.uid()
+    )
+  )
+  with check (
+    exists (
+      select 1 from classes
+      where classes.id = students.class_id
+        and classes.teacher_id = auth.uid()
+    )
+  );
+
 -- Сурагч нэвтрэх нэрээр нэвтрэх (anon-д зөвхөн нэг мөр буцаана)
 create or replace function lookup_student_login(p_username text)
 returns json
@@ -283,28 +301,15 @@ begin
     q := substr(q, 2);
   end if;
 
+  if (select count(*) from students where lower(trim(username)) = q) > 1 then
+    return json_build_object('ok', false, 'error', 'ambiguous');
+  end if;
+
   select *
     into s
   from students
   where lower(trim(username)) = q
-  order by created_at asc
   limit 1;
-
-  if s.id is null then
-    if (
-      select count(*)
-      from students
-      where lower(trim(coalesce(name, ''))) = q
-         or lower(trim(both from concat_ws(' ', last_name, first_name))) = q
-    ) = 1 then
-      select *
-        into s
-      from students
-      where lower(trim(coalesce(name, ''))) = q
-         or lower(trim(both from concat_ws(' ', last_name, first_name))) = q
-      limit 1;
-    end if;
-  end if;
 
   if s.id is null then
     return json_build_object('ok', false, 'error', 'not_found');

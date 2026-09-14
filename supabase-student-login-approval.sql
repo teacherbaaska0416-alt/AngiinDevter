@@ -79,28 +79,15 @@ begin
     q := substr(q, 2);
   end if;
 
+  if (select count(*) from students where lower(trim(username)) = q) > 1 then
+    return json_build_object('ok', false, 'error', 'ambiguous');
+  end if;
+
   select *
     into s
   from students
   where lower(trim(username)) = q
-  order by created_at asc
   limit 1;
-
-  if s.id is null then
-    if (
-      select count(*)
-      from students
-      where lower(trim(coalesce(name, ''))) = q
-         or lower(trim(both from concat_ws(' ', last_name, first_name))) = q
-    ) = 1 then
-      select *
-        into s
-      from students
-      where lower(trim(coalesce(name, ''))) = q
-         or lower(trim(both from concat_ws(' ', last_name, first_name))) = q
-      limit 1;
-    end if;
-  end if;
 
   if s.id is null then
     return json_build_object('ok', false, 'error', 'not_found');

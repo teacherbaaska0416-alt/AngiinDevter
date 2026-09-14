@@ -53,3 +53,21 @@ create policy "Teachers delete class students" on students
         and classes.teacher_id = auth.uid()
     )
   );
+
+drop policy if exists "Teachers update class students" on students;
+create policy "Teachers update class students" on students
+  for update to authenticated
+  using (
+    exists (
+      select 1 from classes
+      where classes.id = students.class_id
+        and classes.teacher_id = auth.uid()
+    )
+  )
+  with check (
+    exists (
+      select 1 from classes
+      where classes.id = students.class_id
+        and classes.teacher_id = auth.uid()
+    )
+  );
