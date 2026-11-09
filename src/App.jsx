@@ -19,6 +19,7 @@ import {
   FileSpreadsheet,
   Download,
   FileText,
+  Presentation,
   Image as ImageIcon,
   Clock,
   Lock,
@@ -27,6 +28,9 @@ import {
   RotateCcw,
   ZoomIn,
   X,
+  ChevronRight,
+  Camera,
+  Settings,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
@@ -50,6 +54,35 @@ const CYR_TO_LAT = {
   р: "r", с: "s", т: "t", у: "u", ү: "u", ф: "f", х: "kh", ц: "ts", ч: "ch",
   ш: "sh", щ: "sh", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya",
 };
+
+const LESSON_FILE_MAX = 50 * 1024 * 1024;
+
+function lessonPresentationMeta(file) {
+  const lower = String(file?.name || "").toLowerCase();
+  if (lower.endsWith(".pptx")) {
+    return {
+      ext: "pptx",
+      contentType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    };
+  }
+  if (lower.endsWith(".ppt")) {
+    return { ext: "ppt", contentType: "application/vnd.ms-powerpoint" };
+  }
+  return null;
+}
+
+function officeEmbedUrl(fileUrl) {
+  return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileUrl)}`;
+}
+
+function officeViewUrl(fileUrl) {
+  return `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(fileUrl)}`;
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function makeJoinCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -1114,6 +1147,23 @@ function loginRequestMissing(error) {
   );
 }
 
+const HEADER_TITLE_DEFAULT = "Багшийн самбар";
+const HEADER_SUBTITLE_DEFAULT = "Анги, хичээл, шалгалт, үр дүнгээ нэг дороос удирдана.";
+
+function teacherAccountFromUser(user) {
+  if (!user?.id || !user.email) return null;
+  const meta = user.user_metadata || {};
+  const text = (value) => (typeof value === "string" ? value : "");
+  return {
+    id: user.id,
+    email: user.email,
+    avatarUrl: text(meta.avatar_url),
+    headerName: text(meta.header_name),
+    headerTitle: text(meta.header_title),
+    headerSubtitle: text(meta.header_subtitle),
+  };
+}
+
 function loginStatusMessage(status) {
   if (status === "rejected") return "Багш нэвтрэлтийг зөвшөөрсөнгүй.";
   if (status === "cancelled") return "Нэвтрэх хүсэлт цуцлагдлаа.";
@@ -1138,6 +1188,8 @@ export default function ClassroomApp() {
   const [teacherLoginLoading, setTeacherLoginLoading] = useState(false);
   const [teacherEmail, setTeacherEmail] = useState("");
   const [teacherPassword, setTeacherPassword] = useState("");
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const [headerSaving, setHeaderSaving] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [saveError, setSaveError] = useState("");
@@ -1163,13 +1215,23 @@ export default function ClassroomApp() {
   const [quizAnswers, setQuizAnswers] = useState({});
   const [quizResult, setQuizResult] = useState(null);
 
-  const [lessonForm, setLessonForm] = useState({ title: "", subject: "", content: "" });
+  const [lessonForm, setLessonForm] = useState({ title: "", subject: "", content: "", file: null });
+  const [lessonSaving, setLessonSaving] = useState(false);
   const [quizForm, setQuizForm] = useState(emptyQuizForm);
   const [editingQuizId, setEditingQuizId] = useState(null);
   const [quizEditorOpen, setQuizEditorOpen] = useState(false);
   const [classForm, setClassForm] = useState({ grade: 7, section: "А" });
 
-  const mapLesson = (l) => ({ id: l.id, title: l.title, subject: l.subject, content: l.content, createdAt: new Date(l.created_at).getTime() });
+  const mapLesson = (l) => ({
+    id: l.id,
+    title: l.title,
+    subject: l.subject,
+    content: l.content || "",
+    fileUrl: l.file_url || "",
+    fileName: l.file_name || "",
+    filePath: l.file_path || "",
+    createdAt: new Date(l.created_at).getTime(),
+  });
   const mapSubject = (s) => ({
     id: s.id,
     teacherId: s.teacher_id,
@@ -1334,7 +1396,7 @@ export default function ClassroomApp() {
         setQuizEditorOpen(false);
         return;
       }
-      if (raw === "quiz" || raw === "class" || raw === "lesson" || raw === "results") {
+      if (raw === "quiz" || raw === "class" || raw === "lesson" || raw === "results" || raw === "header") {
         setTeacherTab(raw);
         setQuizEditorOpen(false);
         return;
@@ -1356,6 +1418,7 @@ export default function ClassroomApp() {
     else if (teacherTab === "class") next = "#/class";
     else if (teacherTab === "lesson") next = "#/lesson";
     else if (teacherTab === "results") next = "#/results";
+    else if (teacherTab === "header") next = "#/header";
     if (window.location.hash !== next) {
       history.replaceState(null, "", `${window.location.pathname}${window.location.search}${next}`);
     }
@@ -1498,14 +1561,16 @@ export default function ClassroomApp() {
   useEffect(() => {
     if (!supabase) return;
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user?.email) {
-        setTeacherUser({ id: session.user.id, email: session.user.email });
+      const account = teacherAccountFromUser(session?.user);
+      if (account) {
+        setTeacherUser(account);
         loadAll();
       }
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user?.email) {
-        setTeacherUser({ id: session.user.id, email: session.user.email });
+      const account = teacherAccountFromUser(session?.user);
+      if (account) {
+        setTeacherUser(account);
         if (_event === "SIGNED_IN") loadAll();
       } else {
         setTeacherUser(null);
@@ -1669,7 +1734,7 @@ export default function ClassroomApp() {
       );
       return;
     }
-    setTeacherUser({ id: data.user.id, email: data.user.email });
+    setTeacherUser(teacherAccountFromUser(data.user));
     setTeacherPassword("");
     setShowTeacherLogin(false);
     setRole("teacher");
@@ -1677,21 +1742,82 @@ export default function ClassroomApp() {
     loadAll();
   }
 
-  async function addLesson() {
-    if (!lessonForm.title.trim() || !lessonForm.content.trim() || !lessonForm.subject.trim()) return;
-    const { data, error } = await supabase
-      .from("lessons")
-      .insert({ title: lessonForm.title, subject: lessonForm.subject, content: lessonForm.content })
-      .select()
-      .single();
+  async function uploadLessonFile(file) {
+    if (!supabase || !teacherUser?.id) {
+      setSaveError("Танилцуулга оруулахын тулд багшаар нэвтэрнэ үү.");
+      return null;
+    }
+    const meta = lessonPresentationMeta(file);
+    if (!meta) {
+      setSaveError("Зөвхөн PowerPoint файл (.ppt, .pptx) оруулна.");
+      return null;
+    }
+    if (file.size > LESSON_FILE_MAX) {
+      setSaveError("Файлын хэмжээ 50MB-аас бага байх ёстой.");
+      return null;
+    }
+    const path = `${teacherUser.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${meta.ext}`;
+    const { error } = await supabase.storage.from("lesson-files").upload(path, file, {
+      cacheControl: "3600",
+      upsert: false,
+      contentType: meta.contentType,
+    });
     if (error) {
-      setSaveError(error.code === "42501" || error.message?.includes("policy")
-        ? "Эрх хүрэлцэхгүй байна. Багшаар нэвтэрсэн эсэхээ шалгана уу."
-        : "Хичээл хадгалахад алдаа гарлаа.");
+      const msg = error.message || "";
+      if (/bucket|not found|row-level security|policy/i.test(msg)) {
+        setSaveError("Танилцуулгын хадгалалт тохироогүй байна. Supabase SQL Editor-т supabase-lesson-files.sql-ийг Run хийнэ үү.");
+      } else if (/size|exceeded|too large/i.test(msg)) {
+        setSaveError("Файл хэт том байна. 50MB-аас бага файл оруулна.");
+      } else {
+        setSaveError("Танилцуулга байршуулахад алдаа гарлаа.");
+      }
+      return null;
+    }
+    const { data } = supabase.storage.from("lesson-files").getPublicUrl(path);
+    return { url: data.publicUrl, name: file.name, path };
+  }
+
+  async function addLesson() {
+    if (lessonSaving) return;
+    const title = lessonForm.title.trim();
+    const subject = lessonForm.subject.trim();
+    const content = lessonForm.content.trim();
+    const file = lessonForm.file;
+    if (!title || !subject || (!content && !file)) return;
+    setLessonSaving(true);
+    setSaveError("");
+    let uploaded = null;
+    if (file) {
+      uploaded = await uploadLessonFile(file);
+      if (!uploaded) {
+        setLessonSaving(false);
+        return;
+      }
+    }
+    const row = { title, subject, content: content || "" };
+    if (uploaded) {
+      row.file_url = uploaded.url;
+      row.file_name = uploaded.name;
+      row.file_path = uploaded.path;
+    }
+    const { data, error } = await supabase.from("lessons").insert(row).select().single();
+    setLessonSaving(false);
+    if (error) {
+      if (uploaded?.path) {
+        await supabase.storage.from("lesson-files").remove([uploaded.path]);
+      }
+      const msg = error.message || "";
+      if (/file_url|schema cache|column/i.test(msg)) {
+        setSaveError("Танилцуулга хадгалах багана байхгүй. Supabase SQL Editor-т supabase-lesson-files.sql-ийг Run хийнэ үү.");
+      } else if (error.code === "42501" || msg.includes("policy")) {
+        setSaveError("Эрх хүрэлцэхгүй байна. Багшаар нэвтэрсэн эсэхээ шалгана уу.");
+      } else {
+        setSaveError("Хичээл хадгалахад алдаа гарлаа.");
+      }
       return;
     }
     setLessons((prev) => [mapLesson(data), ...prev]);
-    setLessonForm({ title: "", subject: subjects[0]?.name || "", content: "" });
+    setLessonForm({ title: "", subject: subjects[0]?.name || "", content: "", file: null });
   }
 
   async function addSubject(rawName) {
@@ -1748,12 +1874,17 @@ export default function ClassroomApp() {
   }
 
   async function deleteLesson(id) {
+    const lesson = lessons.find((l) => l.id === id);
     const prev = lessons;
     setLessons(lessons.filter((l) => l.id !== id));
     const { error } = await supabase.from("lessons").delete().eq("id", id);
     if (error) {
       setSaveError("Хичээл устгахад алдаа гарлаа.");
       setLessons(prev);
+      return;
+    }
+    if (lesson?.filePath) {
+      await supabase.storage.from("lesson-files").remove([lesson.filePath]);
     }
   }
 
@@ -1870,6 +2001,42 @@ export default function ClassroomApp() {
     setSaveError("");
     const { data } = supabase.storage.from("quiz-images").getPublicUrl(path);
     return data.publicUrl;
+  }
+
+  async function changeTeacherAvatar(file) {
+    if (!file || !supabase || !teacherUser?.id) return;
+    setAvatarBusy(true);
+    const url = await uploadQuizImage(file);
+    if (!url) {
+      setAvatarBusy(false);
+      return;
+    }
+    const { error } = await supabase.auth.updateUser({ data: { avatar_url: url } });
+    setAvatarBusy(false);
+    if (error) {
+      setSaveError("Профайл зураг хадгалахад алдаа гарлаа.");
+      return;
+    }
+    setTeacherUser((prev) => (prev ? { ...prev, avatarUrl: url } : prev));
+  }
+
+  async function saveHeaderSettings({ name, title, subtitle }) {
+    if (!supabase || !teacherUser?.id) return;
+    const headerName = name.trim().slice(0, 80);
+    const headerTitle = title.trim() === HEADER_TITLE_DEFAULT ? "" : title.trim().slice(0, 60);
+    const headerSubtitle = subtitle.trim() === HEADER_SUBTITLE_DEFAULT ? "" : subtitle.trim().slice(0, 160);
+    setHeaderSaving(true);
+    setSaveError("");
+    const { error } = await supabase.auth.updateUser({
+      data: { header_name: headerName, header_title: headerTitle, header_subtitle: headerSubtitle },
+    });
+    setHeaderSaving(false);
+    if (error) {
+      setSaveError("Толгойн тохиргоо хадгалахад алдаа гарлаа.");
+      return;
+    }
+    setTeacherUser((prev) => (prev ? { ...prev, headerName, headerTitle, headerSubtitle } : prev));
+    setTeacherTab("home");
   }
 
   function resetQuizForm() {
@@ -2792,6 +2959,7 @@ export default function ClassroomApp() {
               lessonForm={lessonForm}
               setLessonForm={setLessonForm}
               addLesson={addLesson}
+              lessonSaving={lessonSaving}
               deleteLesson={deleteLesson}
               quizForm={quizForm}
               setQuizForm={setQuizForm}
@@ -2829,6 +2997,15 @@ export default function ClassroomApp() {
               studentImportMsg={studentImportMsg}
               setStudentImportMsg={setStudentImportMsg}
               studentImportLoading={studentImportLoading}
+              teacherEmail={teacherUser?.email || ""}
+              teacherAvatarUrl={teacherUser?.avatarUrl || ""}
+              teacherHeaderName={teacherUser?.headerName || ""}
+              teacherHeaderTitle={teacherUser?.headerTitle || ""}
+              teacherHeaderSubtitle={teacherUser?.headerSubtitle || ""}
+              avatarBusy={avatarBusy}
+              headerSaving={headerSaving}
+              onTeacherAvatar={changeTeacherAvatar}
+              onSaveHeaderSettings={saveHeaderSettings}
             />
             </>
           )}
@@ -3273,22 +3450,403 @@ function NavCard({ icon, label, sub, onClick }) {
   );
 }
 
+function ProfileMark({ email, avatarUrl, busy, size = "md", tone = "light" }) {
+  const [broken, setBroken] = useState(false);
+  useEffect(() => {
+    setBroken(false);
+  }, [avatarUrl]);
+  const letter = (email || "Б").trim().charAt(0).toUpperCase();
+  const showPhoto = Boolean(avatarUrl) && !broken;
+  const box = size === "lg" ? "h-20 w-20 text-2xl" : "h-14 w-14 sm:h-16 sm:w-16 text-xl";
+  const frame = tone === "light"
+    ? { background: "rgba(251,249,242,0.16)", border: "2px solid rgba(251,249,242,0.85)", color: "#FBF9F2", boxShadow: "0 8px 18px rgba(16, 28, 58, 0.28)" }
+    : { background: "#EAEFF8", border: "2px solid #C9D4EA", color: "#24478F" };
+  return (
+    <span className={"relative block overflow-hidden rounded-full " + box} style={frame}>
+      {showPhoto ? (
+        <img
+          src={avatarUrl}
+          alt=""
+          className="absolute inset-0 h-full w-full max-w-none object-cover"
+          style={{ objectPosition: "center 20%" }}
+          onError={() => setBroken(true)}
+        />
+      ) : (
+        <span className="absolute inset-0 flex items-center justify-center font-semibold">{letter}</span>
+      )}
+      {busy ? (
+        <span className="absolute inset-0 flex items-center justify-center" style={{ background: tone === "light" ? "rgba(28,54,112,0.5)" : "rgba(251,249,242,0.72)" }}>
+          <Loader2 size={16} className="animate-spin" color={tone === "light" ? "#FBF9F2" : "#24478F"} />
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function TeacherAvatar({ email, avatarUrl, busy, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="relative shrink-0 rounded-full"
+      title="Толгойн тохиргоо"
+      aria-label="Толгойн тохиргоо"
+    >
+      <ProfileMark email={email} avatarUrl={avatarUrl} busy={busy} />
+      <span
+        className="absolute -bottom-0.5 -right-0.5 flex h-6 w-6 items-center justify-center rounded-full"
+        style={{ background: "#FBF9F2", color: "#24478F", border: "1px solid #E3DCC8" }}
+      >
+        <Settings size={12} />
+      </span>
+    </button>
+  );
+}
+
+function TeacherHome({
+  setTab,
+  lessons,
+  quizzes,
+  attempts,
+  classes,
+  subjects,
+  students,
+  teacherEmail = "",
+  teacherAvatarUrl = "",
+  teacherHeaderName = "",
+  teacherHeaderTitle = "",
+  teacherHeaderSubtitle = "",
+  avatarBusy = false,
+}) {
+  const openQuizzes = quizzes.filter((q) => q.isOpen).length;
+  const recent = attempts.slice(0, 5);
+  const now = new Date();
+  const weekdays = ["Ням", "Даваа", "Мягмар", "Лхагва", "Пүрэв", "Баасан", "Бямба"];
+  const today = `${weekdays[now.getDay()]}, ${now.getMonth() + 1}-р сарын ${now.getDate()}`;
+  const headerName = teacherHeaderName.trim();
+  const headerTitle = teacherHeaderTitle.trim() || HEADER_TITLE_DEFAULT;
+  const headerSubtitle = teacherHeaderSubtitle.trim() || HEADER_SUBTITLE_DEFAULT;
+  const stats = [
+    { label: "Анги", value: classes.length },
+    { label: "Сурагч", value: students.length },
+    { label: "Материал", value: lessons.length },
+    { label: "Нээлттэй шалгалт", value: openQuizzes },
+  ];
+  const actions = [
+    {
+      key: "class",
+      icon: School,
+      label: "Анги",
+      hint: "Анги үүсгэж, сурагч бүртгэнэ",
+      stat: `${classes.length} анги · ${students.length} сурагч`,
+      tone: "#24478F",
+      wash: "#EAEFF8",
+    },
+    {
+      key: "lesson",
+      icon: PencilLine,
+      label: "Хичээл",
+      hint: "Хичээл, материал нэмнэ",
+      stat: `${subjects.length} хичээл · ${lessons.length} материал`,
+      tone: "#1F6B4A",
+      wash: "#E4F0E9",
+    },
+    {
+      key: "quiz",
+      icon: ClipboardList,
+      label: "Шалгалт",
+      hint: "Шалгалт үүсгэж, нээнэ",
+      stat: `${quizzes.length} шалгалт · ${openQuizzes} нээлттэй`,
+      tone: "#8A5A00",
+      wash: "#F8F0DC",
+    },
+    {
+      key: "results",
+      icon: Trophy,
+      label: "Үр дүн",
+      hint: "Сурагчдын оноог харна",
+      stat: `${attempts.length} оролдлого`,
+      tone: "#7A3E6D",
+      wash: "#F4E8F1",
+    },
+  ];
+
+  return (
+    <div>
+    <div className="relative mb-5">
+      <section
+        className="relative overflow-hidden rounded-2xl px-6 py-7 sm:px-8 sm:py-8"
+        style={{ background: "linear-gradient(135deg, #1c3670 0%, #24478F 58%, #3d62b0 100%)", color: "#FBF9F2" }}
+      >
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-12 -top-16 h-56 w-56 rounded-full"
+          style={{ background: "rgba(251,249,242,0.08)" }}
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -left-10 -bottom-16 h-40 w-40 rounded-full"
+          style={{ background: "rgba(251,249,242,0.06)" }}
+        />
+        <div className="relative min-h-14 sm:min-h-16 pr-16">
+          <p className="text-xs font-medium uppercase tracking-[0.16em] pt-2" style={{ color: "rgba(251,249,242,0.72)" }}>
+            {today}
+          </p>
+        </div>
+        {headerName ? (
+          <p className="relative text-sm font-medium mt-3" style={{ color: "#FBF9F2" }}>{headerName}</p>
+        ) : null}
+        <h2 className={"cn-hand relative text-5xl sm:text-6xl leading-none " + (headerName ? "mt-1" : "mt-2")}>{headerTitle}</h2>
+        <p className="relative text-sm mt-3 max-w-md" style={{ color: "rgba(251,249,242,0.84)" }}>
+          {headerSubtitle}
+        </p>
+        <div className="relative grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-6">
+          {stats.map((s) => (
+            <div
+              key={s.label}
+              className="rounded-xl px-3.5 py-3"
+              style={{ background: "rgba(251,249,242,0.12)", border: "1px solid rgba(251,249,242,0.16)" }}
+            >
+              <div className="text-2xl font-semibold tabular-nums leading-none">{s.value}</div>
+              <div className="text-xs mt-1.5" style={{ color: "rgba(251,249,242,0.78)" }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+      <div className="absolute top-7 right-6 sm:top-8 sm:right-8 z-10">
+        <TeacherAvatar
+          email={teacherEmail}
+          avatarUrl={teacherAvatarUrl}
+          busy={avatarBusy}
+          onClick={() => setTab("header")}
+        />
+      </div>
+    </div>
+
+      <div className="grid sm:grid-cols-2 gap-3">
+        {actions.map((a) => {
+          const Icon = a.icon;
+          return (
+            <button
+              key={a.key}
+              type="button"
+              onClick={() => setTab(a.key)}
+              className="cn-card group rounded-2xl p-5 text-left flex items-start gap-4 transition-transform hover:-translate-y-0.5"
+            >
+              <span
+                className="shrink-0 w-11 h-11 rounded-xl flex items-center justify-center"
+                style={{ background: a.wash, color: a.tone }}
+              >
+                <Icon size={20} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="font-semibold block" style={{ color: "#2B2A25" }}>{a.label}</span>
+                <span className="text-xs block mt-0.5" style={{ color: "#6B6858" }}>{a.hint}</span>
+                <span className="text-xs font-medium block mt-2" style={{ color: a.tone }}>{a.stat}</span>
+              </span>
+              <ChevronRight
+                size={18}
+                className="shrink-0 mt-1 transition-transform group-hover:translate-x-0.5"
+                color="#A39E8C"
+              />
+            </button>
+          );
+        })}
+      </div>
+
+      <section className="cn-card rounded-2xl p-5 mt-4">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <h3 className="font-semibold text-sm" style={{ color: "#2B2A25" }}>Сүүлийн оролдлогууд</h3>
+          {attempts.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setTab("results")}
+              className="text-xs font-medium"
+              style={{ color: "#24478F" }}
+            >
+              Бүгдийг харах
+            </button>
+          )}
+        </div>
+        {recent.length === 0 ? (
+          <p className="text-sm py-3" style={{ color: "#6B6858" }}>
+            Одоогоор шалгалтын оролдлого алга. Анги, шалгалтаа бэлдээд сурагчдаа нээж өгнө үү.
+          </p>
+        ) : (
+          <ul>
+            {recent.map((a) => {
+              const pct = a.total ? Math.round((a.score / a.total) * 100) : 0;
+              const tone = pct >= 80 ? "#2F6F4E" : pct >= 50 ? "#24478F" : "#9A3324";
+              const wash = pct >= 80 ? "#E4F0E9" : pct >= 50 ? "#EAEFF8" : "#FBE7E4";
+              return (
+                <li key={a.id} className="flex items-center justify-between gap-3 py-2.5 border-b last:border-b-0" style={{ borderColor: "#E3DCC8" }}>
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium truncate">{a.studentName}</div>
+                    <div className="text-xs truncate" style={{ color: "#6B6858" }}>
+                      {a.quizTitle}
+                      {a.subject ? ` · ${a.subject}` : ""}
+                      {a.date ? ` · ${fmtDate(a.date)}` : ""}
+                    </div>
+                  </div>
+                  <span
+                    className="shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full tabular-nums"
+                    style={{ background: wash, color: tone }}
+                  >
+                    {a.score}/{a.total}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function HeaderSettings({
+  email,
+  avatarUrl,
+  avatarBusy,
+  onAvatar,
+  headerName,
+  headerTitle,
+  headerSubtitle,
+  saving,
+  onSave,
+  onBack,
+}) {
+  const [name, setName] = useState(headerName);
+  const [title, setTitle] = useState(headerTitle || HEADER_TITLE_DEFAULT);
+  const [subtitle, setSubtitle] = useState(headerSubtitle || HEADER_SUBTITLE_DEFAULT);
+
+  return (
+    <div>
+      <BackRow onBack={onBack} title="Толгойн тохиргоо" />
+      <form
+        className="cn-card rounded-2xl p-5 sm:p-6"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (saving) return;
+          onSave({ name, title, subtitle });
+        }}
+      >
+        <div className="flex items-center gap-4 mb-6">
+          <ProfileMark email={email} avatarUrl={avatarUrl} busy={avatarBusy} size="lg" tone="dark" />
+          <div className="min-w-0">
+            <div className="font-semibold" style={{ color: "#2B2A25" }}>Профайл зураг</div>
+            {email ? <div className="text-xs truncate mt-0.5" style={{ color: "#6B6858" }}>{email}</div> : null}
+            <label className={"cn-btn-secondary mt-3 inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium " + (avatarBusy ? "opacity-50 pointer-events-none" : "cursor-pointer")}>
+              {avatarBusy ? <Loader2 size={13} className="animate-spin" /> : <Camera size={13} />}
+              Зураг солих
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                className="sr-only"
+                disabled={avatarBusy}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) onAvatar?.(file);
+                }}
+              />
+            </label>
+          </div>
+        </div>
+
+        <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Харагдах нэр</label>
+        <input
+          className="cn-input w-full px-3 py-2 text-sm mb-1"
+          value={name}
+          maxLength={80}
+          placeholder="Жишээ: Н. Баасанжав"
+          onChange={(e) => setName(e.target.value)}
+        />
+        <p className="text-xs mb-4" style={{ color: "#6B6858" }}>Толгойн гарчгийн дээр харагдана. Хоосон бол нуугдана.</p>
+
+        <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Гарчиг</label>
+        <input
+          className="cn-input w-full px-3 py-2 text-sm mb-4"
+          value={title}
+          maxLength={60}
+          onChange={(e) => setTitle(e.target.value)}
+        />
+
+        <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Тайлбар</label>
+        <textarea
+          className="cn-textarea w-full px-3 py-2 text-sm mb-5"
+          rows={3}
+          maxLength={160}
+          value={subtitle}
+          onChange={(e) => setSubtitle(e.target.value)}
+        />
+
+        <button type="submit" disabled={saving} className="cn-btn-primary rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2">
+          {saving ? <Loader2 size={14} className="animate-spin" /> : null}
+          Хадгалах
+        </button>
+      </form>
+    </div>
+  );
+}
+
 /* ---------------- TEACHER ---------------- */
 
 function TeacherView(props) {
-  const { tab, setTab, lessons, quizzes, attempts, classes, subjects = [] } = props;
+  const {
+    tab,
+    setTab,
+    lessons,
+    quizzes,
+    attempts,
+    classes,
+    subjects = [],
+    students = [],
+    teacherEmail,
+    teacherAvatarUrl,
+    teacherHeaderName,
+    teacherHeaderTitle,
+    teacherHeaderSubtitle,
+    avatarBusy,
+    headerSaving,
+    onTeacherAvatar,
+    onSaveHeaderSettings,
+  } = props;
 
   if (tab === "home") {
     return (
-      <div>
-        <h2 className="cn-hand text-4xl mb-5" style={{ color: "#24478F" }}>Багшийн самбар</h2>
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          <NavCard icon={<School size={22} color="#24478F" />} label="Анги үүсгэх" sub={`${classes.length} анги`} onClick={() => setTab("class")} />
-          <NavCard icon={<PencilLine size={22} color="#24478F" />} label="Хичээлүүд" sub={`${subjects.length} хичээл · ${lessons.length} материал`} onClick={() => setTab("lesson")} />
-          <NavCard icon={<ClipboardList size={22} color="#24478F" />} label="Шалгалт үүсгэх" sub={`${quizzes.length} шалгалт`} onClick={() => setTab("quiz")} />
-          <NavCard icon={<Trophy size={22} color="#24478F" />} label="Сурагчдын үр дүн" sub={`${attempts.length} оролдлого`} onClick={() => setTab("results")} />
-        </div>
-      </div>
+      <TeacherHome
+        setTab={setTab}
+        lessons={lessons}
+        quizzes={quizzes}
+        attempts={attempts}
+        classes={classes}
+        subjects={subjects}
+        students={students}
+        teacherEmail={teacherEmail}
+        teacherAvatarUrl={teacherAvatarUrl}
+        teacherHeaderName={teacherHeaderName}
+        teacherHeaderTitle={teacherHeaderTitle}
+        teacherHeaderSubtitle={teacherHeaderSubtitle}
+        avatarBusy={avatarBusy}
+      />
+    );
+  }
+
+  if (tab === "header") {
+    return (
+      <HeaderSettings
+        email={teacherEmail}
+        avatarUrl={teacherAvatarUrl}
+        avatarBusy={avatarBusy}
+        onAvatar={onTeacherAvatar}
+        headerName={teacherHeaderName}
+        headerTitle={teacherHeaderTitle}
+        headerSubtitle={teacherHeaderSubtitle}
+        saving={headerSaving}
+        onSave={onSaveHeaderSettings}
+        onBack={() => setTab("home")}
+      />
     );
   }
 
@@ -3624,11 +4182,41 @@ function ClassBuilder({
   );
 }
 
+function PptViewer({ url, name }) {
+  if (!url) return null;
+  return (
+    <div className="mt-4">
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <span className="text-xs font-medium truncate" style={{ color: "#24478F" }}>{name || "PowerPoint"}</span>
+        <a
+          href={officeViewUrl(url)}
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs underline shrink-0"
+          style={{ color: "#24478F" }}
+        >
+          Бүтэн дэлгэц
+        </a>
+      </div>
+      <div className="rounded-lg overflow-hidden border" style={{ borderColor: "#E3DCC8", background: "#F7F4EC" }}>
+        <iframe
+          title={name || "PowerPoint"}
+          src={officeEmbedUrl(url)}
+          className="w-full bg-white"
+          style={{ height: "min(72vh, 640px)", border: 0 }}
+          allowFullScreen
+        />
+      </div>
+    </div>
+  );
+}
+
 function LessonBuilder({
   setTab,
   lessonForm,
   setLessonForm,
   addLesson,
+  lessonSaving,
   lessons,
   deleteLesson,
   subjects = [],
@@ -3637,6 +4225,14 @@ function LessonBuilder({
 }) {
   const [subjectName, setSubjectName] = useState("");
   const [addingSubject, setAddingSubject] = useState(false);
+  const [previewId, setPreviewId] = useState(null);
+  const [fileError, setFileError] = useState("");
+  const fileInputRef = useRef(null);
+  const canSave = Boolean(
+    lessonForm.title.trim()
+    && lessonForm.subject.trim()
+    && (lessonForm.content.trim() || lessonForm.file)
+  );
 
   async function handleAddSubject(e) {
     e?.preventDefault();
@@ -3710,16 +4306,64 @@ function LessonBuilder({
         <textarea
           className="cn-textarea w-full px-3 py-2 text-sm mb-3"
           rows={8}
-          placeholder="Хичээлийн агуулга, тайлбар..."
+          placeholder="Хичээлийн агуулга, тайлбар... (PowerPoint оруулбал хоосон байж болно)"
           value={lessonForm.content}
           onChange={(e) => setLessonForm((f) => ({ ...f, content: e.target.value }))}
         />
+        <div className="mb-3">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0] || null;
+              e.target.value = "";
+              if (!file) return;
+              if (!lessonPresentationMeta(file)) {
+                setFileError("Зөвхөн PowerPoint файл (.ppt, .pptx) оруулна.");
+                return;
+              }
+              if (file.size > LESSON_FILE_MAX) {
+                setFileError("Файлын хэмжээ 50MB-аас бага байх ёстой.");
+                return;
+              }
+              setFileError("");
+              setLessonForm((f) => ({ ...f, file }));
+            }}
+          />
+          {lessonForm.file ? (
+            <div className="flex items-center justify-between gap-3 rounded-md px-3 py-2 text-sm" style={{ background: "#EAEFF8", color: "#24478F" }}>
+              <span className="inline-flex items-center gap-2 min-w-0">
+                <Presentation size={16} />
+                <span className="truncate">{lessonForm.file.name}</span>
+                <span className="text-xs shrink-0" style={{ color: "#6B6858" }}>{formatFileSize(lessonForm.file.size)}</span>
+              </span>
+              <button type="button" onClick={() => { setFileError(""); setLessonForm((f) => ({ ...f, file: null })); }} style={{ color: "#9A3324" }} title="Файл хасах">
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="cn-btn-secondary rounded-md px-3 py-2 text-sm font-medium inline-flex items-center gap-1.5"
+            >
+              <Presentation size={15} /> PowerPoint оруулах
+            </button>
+          )}
+          {fileError ? <p className="text-xs mt-2" style={{ color: "#9A3324" }}>{fileError}</p> : null}
+          <p className="text-xs mt-2" style={{ color: "#6B6858" }}>
+            .ppt, .pptx, 50MB хүртэл. Слайдын загвар, зураг, текст PowerPoint дээрхтэйгээ адил харагдана. Товшоод гардаг хөдөлгөөн, шилжилт, видео, дуу тоглогдохгүй.
+          </p>
+        </div>
         <button
           onClick={addLesson}
-          disabled={!lessonForm.title.trim() || !lessonForm.content.trim() || !lessonForm.subject.trim()}
+          disabled={!canSave || lessonSaving}
           className="cn-btn-primary rounded-md px-4 py-2 text-sm font-medium disabled:opacity-40 flex items-center gap-1.5"
         >
-          <Plus size={15} /> Материал хадгалах
+          {lessonSaving ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+          Материал хадгалах
         </button>
       </div>
 
@@ -3729,12 +4373,30 @@ function LessonBuilder({
       ) : (
         <div className="space-y-2">
           {lessons.map((l) => (
-            <div key={l.id} className="cn-card rounded-lg p-3 flex items-center justify-between">
-              <div>
-                <span className="cn-tag mr-2">{l.subject}</span>
-                <span className="text-sm font-medium">{l.title}</span>
+            <div key={l.id} className="cn-card rounded-lg p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <span className="cn-tag mr-2">{l.subject}</span>
+                  <span className="text-sm font-medium">{l.title}</span>
+                  {l.fileName ? (
+                    <div className="text-xs mt-1 truncate" style={{ color: "#6B6858" }}>PPT · {l.fileName}</div>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {l.fileUrl ? (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewId((id) => (id === l.id ? null : l.id))}
+                      className="text-xs underline"
+                      style={{ color: "#24478F" }}
+                    >
+                      {previewId === l.id ? "Хаах" : "Харах"}
+                    </button>
+                  ) : null}
+                  <button onClick={() => deleteLesson(l.id)} style={{ color: "#9A3324" }}><Trash2 size={16} /></button>
+                </div>
               </div>
-              <button onClick={() => deleteLesson(l.id)} style={{ color: "#9A3324" }}><Trash2 size={16} /></button>
+              {previewId === l.id && l.fileUrl ? <PptViewer url={l.fileUrl} name={l.fileName} /> : null}
             </div>
           ))}
         </div>
@@ -4823,9 +5485,14 @@ function LessonList({ setTab, lessons, setActiveLesson }) {
         <div className="grid sm:grid-cols-2 gap-3">
           {lessons.map((l) => (
             <button key={l.id} onClick={() => { setActiveLesson(l); setTab("lesson"); }} className="cn-card rounded-lg p-4 text-left transition-transform hover:-translate-y-0.5">
-              <span className="cn-tag">{l.subject}</span>
+              <div className="flex items-center gap-2">
+                <span className="cn-tag">{l.subject}</span>
+                {l.fileUrl ? <span className="cn-tag">PPT</span> : null}
+              </div>
               <div className="font-semibold mt-2">{l.title}</div>
-              <div className="text-xs mt-1 line-clamp-2" style={{ color: "#6B6858" }}>{l.content.slice(0, 90)}...</div>
+              <div className="text-xs mt-1 line-clamp-2" style={{ color: "#6B6858" }}>
+                {l.fileName ? `PPT · ${l.fileName}` : `${(l.content || "").slice(0, 90)}...`}
+              </div>
             </button>
           ))}
         </div>
@@ -4841,7 +5508,10 @@ function LessonDetail({ setTab, activeLesson }) {
       <BackRow onBack={() => setTab("lessons")} title={activeLesson.title} />
       <div className="cn-card rounded-xl p-6">
         <span className="cn-tag">{activeLesson.subject}</span>
-        <p className="text-sm mt-4 whitespace-pre-wrap leading-relaxed">{activeLesson.content}</p>
+        {activeLesson.fileUrl ? <PptViewer url={activeLesson.fileUrl} name={activeLesson.fileName} /> : null}
+        {activeLesson.content ? (
+          <p className="text-sm mt-4 whitespace-pre-wrap leading-relaxed">{activeLesson.content}</p>
+        ) : null}
       </div>
     </div>
   );

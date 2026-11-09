@@ -8,6 +8,9 @@ create table if not exists lessons (
   title text not null,
   subject text not null,
   content text not null,
+  file_url text,
+  file_name text,
+  file_path text,
   created_at timestamptz not null default now()
 );
 
