@@ -3,6 +3,7 @@ import {
   GraduationCap,
   Users,
   BookOpen,
+  Keyboard,
   ClipboardList,
   Trophy,
   PencilLine,
@@ -31,11 +32,15 @@ import {
   ChevronRight,
   Camera,
   Settings,
+  Folder,
+  FolderPlus,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
+import TypingCourse, { TypingCourseWindow, TypingEditor } from "./TypingCourse.jsx";
+import { TYPING_LESSONS, mergeTypingLessons } from "./typingCourse.js";
 
 GlobalWorkerOptions.workerSrc = pdfWorker;
 
@@ -1147,8 +1152,36 @@ function loginRequestMissing(error) {
   );
 }
 
+function typingTableMissingError(error) {
+  const msg = error?.message || "";
+  return error?.code === "42P01" || error?.code === "PGRST205" || /typing_drills|schema cache/i.test(msg);
+}
+
+function lessonGroupMissingError(error) {
+  const msg = error?.message || "";
+  return error?.code === "42P01" || error?.code === "PGRST205" || error?.code === "PGRST204" || error?.code === "23502" || /lesson_groups|group_id|parent_id|subject_id/i.test(msg);
+}
+
+function mapTypingDrill(row) {
+  return {
+    id: row.id,
+    title: row.title || "",
+    focus: row.focus || "",
+    tip: row.tip || "",
+    prompt: row.prompt || "",
+    goalWpm: Number(row.goal_wpm) || 0,
+  };
+}
+
 const HEADER_TITLE_DEFAULT = "Багшийн самбар";
 const HEADER_SUBTITLE_DEFAULT = "Анги, хичээл, шалгалт, үр дүнгээ нэг дороос удирдана.";
+
+function subjectTeacherHeading(subject) {
+  const name = String(subject || "").trim();
+  if (!name || name === HEADER_TITLE_DEFAULT) return HEADER_TITLE_DEFAULT;
+  if (/хичээлийн багш$/i.test(name)) return name;
+  return `${name} хичээлийн багш`;
+}
 
 function teacherAccountFromUser(user) {
   if (!user?.id || !user.email) return null;
@@ -1199,8 +1232,14 @@ export default function ClassroomApp() {
   const [attempts, setAttempts] = useState([]);
   const [classes, setClasses] = useState([]);
   const [subjects, setSubjects] = useState([]);
+  const [lessonGroups, setLessonGroups] = useState([]);
+  const [lessonGroupsMissing, setLessonGroupsMissing] = useState(false);
   const [students, setStudents] = useState([]);
   const [retakeGrants, setRetakeGrants] = useState([]);
+  const [typingOverrides, setTypingOverrides] = useState([]);
+  const [typingTableMissing, setTypingTableMissing] = useState(false);
+  const [typingSavingId, setTypingSavingId] = useState(null);
+  const [typingEditError, setTypingEditError] = useState("");
   const [activeClassId, setActiveClassId] = useState(null);
   const [studentLastNameInput, setStudentLastNameInput] = useState("");
   const [studentFirstNameInput, setStudentFirstNameInput] = useState("");
@@ -1215,7 +1254,7 @@ export default function ClassroomApp() {
   const [quizAnswers, setQuizAnswers] = useState({});
   const [quizResult, setQuizResult] = useState(null);
 
-  const [lessonForm, setLessonForm] = useState({ title: "", subject: "", content: "", file: null });
+  const [lessonForm, setLessonForm] = useState({ title: "", subject: "", subjectId: null, grade: null, groupId: null, content: "", file: null });
   const [lessonSaving, setLessonSaving] = useState(false);
   const [quizForm, setQuizForm] = useState(emptyQuizForm);
   const [editingQuizId, setEditingQuizId] = useState(null);
@@ -1226,6 +1265,9 @@ export default function ClassroomApp() {
     id: l.id,
     title: l.title,
     subject: l.subject,
+    subjectId: l.subject_id || null,
+    groupId: l.group_id || null,
+    grade: l.grade != null && l.grade !== "" ? Number(l.grade) : null,
     content: l.content || "",
     fileUrl: l.file_url || "",
     fileName: l.file_name || "",
@@ -1236,7 +1278,18 @@ export default function ClassroomApp() {
     id: s.id,
     teacherId: s.teacher_id,
     name: s.name,
+    grade: s.grade != null && s.grade !== "" ? Number(s.grade) : null,
     createdAt: new Date(s.created_at).getTime(),
+  });
+  const mapLessonGroup = (g) => ({
+    id: g.id,
+    teacherId: g.teacher_id,
+    subjectId: g.subject_id || null,
+    grade: g.grade != null && g.grade !== "" ? Number(g.grade) : null,
+    parentId: g.parent_id || null,
+    name: g.name,
+    position: Number(g.position) || 0,
+    createdAt: new Date(g.created_at).getTime(),
   });
   const mapClass = (c) => ({
     id: c.id,
@@ -1327,6 +1380,26 @@ export default function ClassroomApp() {
       } else {
         setRetakeGrants([]);
       }
+      const drillsRes = await supabase.from("typing_drills").select("*");
+      if (!drillsRes.error) {
+        setTypingOverrides((drillsRes.data || []).map(mapTypingDrill));
+        setTypingTableMissing(false);
+      } else if (typingTableMissingError(drillsRes.error)) {
+        setTypingOverrides([]);
+        setTypingTableMissing(true);
+      } else {
+        setTypingOverrides([]);
+      }
+      const groupsRes = await supabase.from("lesson_groups").select("*").order("position", { ascending: true });
+      if (!groupsRes.error) {
+        setLessonGroups((groupsRes.data || []).map(mapLessonGroup));
+        setLessonGroupsMissing(false);
+      } else if (lessonGroupMissingError(groupsRes.error)) {
+        setLessonGroups([]);
+        setLessonGroupsMissing(true);
+      } else {
+        setLessonGroups([]);
+      }
     } catch (e) {
       setSaveError("Дата ачаалахад алдаа гарлаа. Supabase тохиргоогоо шалгана уу.");
     }
@@ -1341,9 +1414,24 @@ export default function ClassroomApp() {
     const names = subjects.map((s) => s.name);
     const first = names[0] || "";
     setLessonForm((f) => {
-      if (!names.length) return f.subject ? { ...f, subject: "" } : f;
-      if (f.subject && names.includes(f.subject)) return f;
-      return { ...f, subject: first };
+      if (!subjects.length) {
+        return f.subject || f.subjectId ? { ...f, subject: "", subjectId: null, grade: null } : f;
+      }
+      if (f.subjectId && subjects.some((s) => s.id === f.subjectId)) return f;
+      const matches = subjects.filter((s) => s.name === f.subject);
+      if (matches.length === 1) {
+        return {
+          ...f,
+          subject: matches[0].name,
+          subjectId: matches[0].id,
+          grade: matches[0].grade ?? null,
+          groupId: f.subjectId === matches[0].id ? f.groupId : null,
+        };
+      }
+      if (f.subject && matches.length > 1) return { ...f, subjectId: null, grade: null, groupId: null };
+      const ranked = [...subjects].sort((a, b) => (a.grade || 99) - (b.grade || 99) || a.name.localeCompare(b.name, "mn"));
+      const picked = ranked[0];
+      return { ...f, subject: picked.name, subjectId: picked.id, grade: picked.grade ?? null, groupId: null };
     });
     setQuizForm((f) => {
       if (f.subject && (names.includes(f.subject) || editingQuizId)) return f;
@@ -1780,10 +1868,11 @@ export default function ClassroomApp() {
   async function addLesson() {
     if (lessonSaving) return;
     const title = lessonForm.title.trim();
-    const subject = lessonForm.subject.trim();
+    const chosen = subjects.find((s) => s.id === lessonForm.subjectId) || null;
+    const subject = chosen?.name || "";
     const content = lessonForm.content.trim();
     const file = lessonForm.file;
-    if (!title || !subject || (!content && !file)) return;
+    if (!title || !chosen || (!content && !file)) return;
     setLessonSaving(true);
     setSaveError("");
     let uploaded = null;
@@ -1794,7 +1883,15 @@ export default function ClassroomApp() {
         return;
       }
     }
-    const row = { title, subject, content: content || "" };
+    const group = lessonGroups.find((item) => item.id === lessonForm.groupId && (item.subjectId === chosen.id || (!item.subjectId && item.grade === chosen.grade))) || null;
+    const row = {
+      title,
+      subject,
+      subject_id: chosen.id,
+      grade: chosen.grade ?? null,
+      content: content || "",
+    };
+    if (group) row.group_id = group.id;
     if (uploaded) {
       row.file_url = uploaded.url;
       row.file_name = uploaded.name;
@@ -1807,7 +1904,11 @@ export default function ClassroomApp() {
         await supabase.storage.from("lesson-files").remove([uploaded.path]);
       }
       const msg = error.message || "";
-      if (/file_url|schema cache|column/i.test(msg)) {
+      if (error.code === "PGRST204" && /group_id/i.test(msg)) {
+        setSaveError("Бүлэг хадгалах багана байхгүй. Supabase SQL Editor-т supabase-lesson-groups.sql-ийг Run хийнэ үү.");
+      } else if (error.code === "PGRST204" || /subject_id/i.test(msg)) {
+        setSaveError("Материалыг ангиар салгах багана байхгүй. Supabase SQL Editor-т supabase-lessons-subject.sql-ийг Run хийнэ үү.");
+      } else if (/file_url|schema cache|column/i.test(msg)) {
         setSaveError("Танилцуулга хадгалах багана байхгүй. Supabase SQL Editor-т supabase-lesson-files.sql-ийг Run хийнэ үү.");
       } else if (error.code === "42501" || msg.includes("policy")) {
         setSaveError("Эрх хүрэлцэхгүй байна. Багшаар нэвтэрсэн эсэхээ шалгана уу.");
@@ -1817,28 +1918,35 @@ export default function ClassroomApp() {
       return;
     }
     setLessons((prev) => [mapLesson(data), ...prev]);
-    setLessonForm({ title: "", subject: subjects[0]?.name || "", content: "", file: null });
+    setLessonForm((f) => ({ ...f, title: "", content: "", file: null }));
   }
 
-  async function addSubject(rawName) {
+  async function addSubject(rawName, grade) {
     const name = String(rawName || "").trim();
+    const gradeNum = Number(grade);
     if (!name) return false;
+    if (![6, 7, 8, 9, 10, 11, 12].includes(gradeNum)) {
+      setSaveError("6–12-р анги сонгоно уу.");
+      return false;
+    }
     if (!teacherUser?.id) {
       setSaveError("Хичээл үүсгэхийн тулд багшаар нэвтэрнэ үү.");
       return false;
     }
-    if (subjects.some((s) => s.name.toLowerCase() === name.toLowerCase())) {
-      setSaveError("Ийм нэртэй хичээл аль хэдийн байна.");
+    if (subjects.some((s) => s.grade === gradeNum && s.name.toLowerCase() === name.toLowerCase())) {
+      setSaveError("Энэ ангид ийм нэртэй хичээл байна.");
       return false;
     }
     const { data, error } = await supabase
       .from("subjects")
-      .insert({ teacher_id: teacherUser.id, name })
+      .insert({ teacher_id: teacherUser.id, name, grade: gradeNum })
       .select()
       .single();
     if (error) {
       if (error.code === "23505") {
-        setSaveError("Ийм нэртэй хичээл аль хэдийн байна.");
+        setSaveError("Энэ ангид ийм нэртэй хичээл байна.");
+      } else if (error.code === "PGRST204" || /grade/i.test(error.message || "")) {
+        setSaveError("Ангийн багана байхгүй. Supabase SQL Editor-т supabase-subjects-grade.sql-ийг Run хийнэ үү.");
       } else if (error.code === "42P01" || error.message?.includes("schema cache") || error.message?.includes("subjects")) {
         setSaveError("Хичээлийн хүснэгт байхгүй. Supabase SQL Editor-т supabase-subjects.sql-ийг Run хийнэ үү.");
       } else if (error.code === "42501" || error.message?.includes("policy")) {
@@ -1851,9 +1959,61 @@ export default function ClassroomApp() {
     setSaveError("");
     const mapped = mapSubject(data);
     setSubjects((prev) => [...prev, mapped].sort((a, b) => a.createdAt - b.createdAt));
-    setLessonForm((f) => (f.subject ? f : { ...f, subject: mapped.name }));
+    setLessonForm((f) => ({ ...f, subject: mapped.name, subjectId: mapped.id, grade: mapped.grade ?? null }));
     setQuizForm((f) => (f.subject ? f : { ...f, subject: mapped.name }));
-    return true;
+    return mapped;
+  }
+
+  async function updateSubjectGrade(id, grade) {
+    const gradeNum = Number(grade);
+    if (!id || ![6, 7, 8, 9, 10, 11, 12].includes(gradeNum)) return;
+    const current = subjects.find((s) => s.id === id);
+    if (!current) return;
+    if (subjects.some((s) => s.id !== id && s.grade === gradeNum && s.name.toLowerCase() === current.name.toLowerCase())) {
+      setSaveError("Энэ ангид ийм нэртэй хичээл байна.");
+      return;
+    }
+    const prev = subjects;
+    setSubjects((list) => list.map((s) => (s.id === id ? { ...s, grade: gradeNum } : s)));
+    const { error } = await supabase.from("subjects").update({ grade: gradeNum }).eq("id", id);
+    if (error) {
+      setSubjects(prev);
+      setSaveError(error.code === "PGRST204" || /grade/i.test(error.message || "")
+        ? "Ангийн багана байхгүй. Supabase SQL Editor-т supabase-subjects-grade.sql-ийг Run хийнэ үү."
+        : "Анги онооход алдаа гарлаа.");
+      return;
+    }
+    const { error: lessonError } = await supabase.from("lessons").update({ grade: gradeNum }).eq("subject_id", id);
+    if (!lessonError) {
+      setLessons((list) => list.map((l) => (l.subjectId === id ? { ...l, grade: gradeNum } : l)));
+    } else if (lessonError.code === "PGRST204" || /subject_id/i.test(lessonError.message || "")) {
+      setSaveError("Материалыг ангиар салгах багана байхгүй. Supabase SQL Editor-т supabase-lessons-subject.sql-ийг Run хийнэ үү.");
+    }
+  }
+
+  async function assignLessonSubject(lessonId, subjectId) {
+    const subject = subjects.find((s) => s.id === subjectId);
+    if (!lessonId || !subject) return;
+    const prev = lessons;
+    const current = lessons.find((l) => l.id === lessonId);
+    setLessons((list) => list.map((l) => (
+      l.id === lessonId
+        ? { ...l, subjectId: subject.id, subject: subject.name, grade: subject.grade ?? null, groupId: null }
+        : l
+    )));
+    const patch = {
+      subject_id: subject.id,
+      subject: subject.name,
+      grade: subject.grade ?? null,
+    };
+    if (current?.groupId) patch.group_id = null;
+    const { error } = await supabase.from("lessons").update(patch).eq("id", lessonId);
+    if (error) {
+      setLessons(prev);
+      setSaveError(error.code === "PGRST204" || /subject_id/i.test(error.message || "")
+        ? "Материалыг ангиар салгах багана байхгүй. Supabase SQL Editor-т supabase-lessons-subject.sql-ийг Run хийнэ үү."
+        : "Материалыг хичээлд холбоход алдаа гарлаа.");
+    }
   }
 
   async function deleteSubject(id) {
@@ -1861,15 +2021,125 @@ export default function ClassroomApp() {
     const removed = subjects.find((s) => s.id === id);
     const next = subjects.filter((s) => s.id !== id);
     setSubjects(next);
+    const prevLessons = lessons;
+    const prevGroups = lessonGroups;
     if (removed) {
-      const fallback = next[0]?.name || "";
-      setLessonForm((f) => (f.subject === removed.name ? { ...f, subject: fallback } : f));
-      setQuizForm((f) => (f.subject === removed.name && !editingQuizId ? { ...f, subject: fallback } : f));
+      const fallback = next[0] || null;
+      setLessonForm((f) => {
+        const affected = f.subjectId === removed.id || (!f.subjectId && f.subject === removed.name);
+        if (!affected) return f;
+        return {
+          ...f,
+          subject: fallback?.name || "",
+          subjectId: fallback?.id || null,
+          grade: fallback?.grade ?? null,
+        };
+      });
+      setQuizForm((f) => (f.subject === removed.name && !editingQuizId ? { ...f, subject: fallback?.name || "" } : f));
+      setLessons((list) => list.map((l) => (l.subjectId === id ? { ...l, subjectId: null, groupId: null } : l)));
+      setLessonGroups((list) => list.filter((g) => g.subjectId !== id));
     }
     const { error } = await supabase.from("subjects").delete().eq("id", id);
     if (error) {
       setSaveError("Хичээл устгахад алдаа гарлаа.");
       setSubjects(prev);
+      setLessons(prevLessons);
+      setLessonGroups(prevGroups);
+    }
+  }
+
+  async function addLessonGroup({ grade, parentId = null, name: rawName }) {
+    const name = String(rawName || "").trim();
+    const gradeNum = Number(grade);
+    if (!name || ![6, 7, 8, 9, 10, 11, 12].includes(gradeNum)) return null;
+    if (!teacherUser?.id) {
+      setSaveError("Бүлэг үүсгэхийн тулд багшаар нэвтэрнэ үү.");
+      return null;
+    }
+    const parent = parentId ? lessonGroups.find((g) => g.id === parentId) : null;
+    if (parentId && !parent) return null;
+    const siblings = lessonGroups.filter((g) => (parent
+      ? g.parentId === parent.id
+      : !g.parentId && !g.subjectId && g.grade === gradeNum));
+    if (siblings.some((g) => g.name.toLowerCase() === name.toLowerCase())) {
+      setSaveError(parent ? "Энэ бүлэгт ийм дэд бүлэг байна." : "Энэ ангид ийм бүлэг байна.");
+      return null;
+    }
+    const position = siblings.reduce((max, g) => Math.max(max, g.position), 0) + 1;
+    const { data, error } = await supabase.from("lesson_groups").insert({
+      teacher_id: teacherUser.id,
+      subject_id: null,
+      grade: parent?.grade ?? gradeNum,
+      parent_id: parent?.id || null,
+      name,
+      position,
+    }).select().single();
+    if (error) {
+      if (lessonGroupMissingError(error)) {
+        setLessonGroupsMissing(true);
+        setSaveError("Бүлгийг хичээлгүй үүсгэхийн тулд Supabase SQL Editor-т supabase-lesson-groups.sql-ийг дахин Run хийнэ үү.");
+      } else if (error.code === "23505") {
+        setSaveError(parent ? "Энэ бүлэгт ийм дэд бүлэг байна." : "Энэ ангид ийм бүлэг байна.");
+      } else {
+        setSaveError("Бүлэг нэмэхэд алдаа гарлаа.");
+      }
+      return null;
+    }
+    const mapped = mapLessonGroup(data);
+    setLessonGroups((prev) => [...prev, mapped].sort((a, b) => a.position - b.position || a.name.localeCompare(b.name, "mn")));
+    setSaveError("");
+    return mapped;
+  }
+
+  async function renameLessonGroup(id, rawName) {
+    const name = String(rawName || "").trim();
+    const current = lessonGroups.find((g) => g.id === id);
+    if (!current || !name || name === current.name) return;
+    const duplicate = lessonGroups.some((g) => {
+      if (g.id === id || g.name.toLowerCase() !== name.toLowerCase()) return false;
+      if (current.parentId) return g.parentId === current.parentId;
+      if (current.subjectId) return g.subjectId === current.subjectId && !g.parentId;
+      return !g.parentId && !g.subjectId && g.grade === current.grade;
+    });
+    if (duplicate) {
+      setSaveError(current.parentId ? "Энэ бүлэгт ийм дэд бүлэг байна." : "Энэ ангид ийм бүлэг байна.");
+      return;
+    }
+    const prev = lessonGroups;
+    setLessonGroups((list) => list.map((g) => (g.id === id ? { ...g, name } : g)));
+    const { error } = await supabase.from("lesson_groups").update({ name }).eq("id", id);
+    if (error) {
+      setLessonGroups(prev);
+      setSaveError(lessonGroupMissingError(error)
+        ? "Бүлгийн хүснэгт байхгүй. Supabase SQL Editor-т supabase-lesson-groups.sql-ийг Run хийнэ үү."
+        : "Бүлгийн нэрийг засахад алдаа гарлаа.");
+    }
+  }
+
+  async function deleteLessonGroup(id) {
+    const prevGroups = lessonGroups;
+    const prevLessons = lessons;
+    const removedIds = new Set([id, ...descendantGroupIds(lessonGroups, id)]);
+    setLessonGroups((list) => list.filter((g) => !removedIds.has(g.id)));
+    setLessons((list) => list.map((l) => (removedIds.has(l.groupId) ? { ...l, groupId: null } : l)));
+    const { error } = await supabase.from("lesson_groups").delete().eq("id", id);
+    if (error) {
+      setLessonGroups(prevGroups);
+      setLessons(prevLessons);
+      setSaveError("Бүлэг устгахад алдаа гарлаа.");
+    }
+  }
+
+  async function moveLessonToGroup(lessonId, groupId) {
+    const nextGroupId = groupId || null;
+    const prev = lessons;
+    setLessons((list) => list.map((l) => (l.id === lessonId ? { ...l, groupId: nextGroupId } : l)));
+    const { error } = await supabase.from("lessons").update({ group_id: nextGroupId }).eq("id", lessonId);
+    if (error) {
+      setLessons(prev);
+      setSaveError(lessonGroupMissingError(error)
+        ? "Бүлэг хадгалах багана байхгүй. Supabase SQL Editor-т supabase-lesson-groups.sql-ийг Run хийнэ үү."
+        : "Материалыг бүлэгт оруулахад алдаа гарлаа.");
     }
   }
 
@@ -2023,7 +2293,8 @@ export default function ClassroomApp() {
   async function saveHeaderSettings({ name, title, subtitle }) {
     if (!supabase || !teacherUser?.id) return;
     const headerName = name.trim().slice(0, 80);
-    const headerTitle = title.trim() === HEADER_TITLE_DEFAULT ? "" : title.trim().slice(0, 60);
+    const rawTitle = title.trim().slice(0, 60);
+    const headerTitle = !rawTitle || rawTitle === HEADER_TITLE_DEFAULT ? "" : rawTitle.replace(/\s*хичээлийн багш$/i, "").trim();
     const headerSubtitle = subtitle.trim() === HEADER_SUBTITLE_DEFAULT ? "" : subtitle.trim().slice(0, 160);
     setHeaderSaving(true);
     setSaveError("");
@@ -2717,6 +2988,54 @@ export default function ClassroomApp() {
     .filter((a) => a.studentName === studentName || (studentSession?.username && a.studentName === studentSession.username))
     .sort((a, b) => b.date - a.date);
   const allAttemptsSorted = [...attempts].sort((a, b) => b.date - a.date);
+  const typingCourse = mergeTypingLessons(typingOverrides);
+
+  async function saveTypingDrill(draft) {
+    if (!supabase) return;
+    const title = String(draft.title || "").trim();
+    const prompt = String(draft.prompt || "").trim();
+    if (!title || !prompt) return;
+    setTypingSavingId(draft.id);
+    setTypingEditError("");
+    const row = {
+      id: draft.id,
+      title,
+      focus: String(draft.focus || "").trim(),
+      tip: String(draft.tip || "").trim(),
+      prompt,
+      goal_wpm: Math.min(120, Math.max(1, Number(draft.goalWpm) || 12)),
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabase.from("typing_drills").upsert(row);
+    setTypingSavingId(null);
+    if (error) {
+      if (typingTableMissingError(error)) setTypingTableMissing(true);
+      setTypingEditError(typingTableMissingError(error)
+        ? "Хадгалах хүснэгт байхгүй. Supabase SQL Editor-т supabase-typing-drills.sql-ийг Run хийнэ үү."
+        : "Дасгал хадгалахад алдаа гарлаа.");
+      return;
+    }
+    setTypingTableMissing(false);
+    setTypingOverrides((prev) => {
+      const next = prev.filter((item) => item.id !== row.id);
+      next.push(mapTypingDrill(row));
+      return next;
+    });
+  }
+
+  async function resetTypingDrill(id) {
+    if (!supabase || !id) return;
+    setTypingSavingId(id);
+    setTypingEditError("");
+    const { error } = await supabase.from("typing_drills").delete().eq("id", id);
+    setTypingSavingId(null);
+    if (error) {
+      if (typingTableMissingError(error)) setTypingTableMissing(true);
+      setTypingEditError("Анхны дасгал руу буцаахад алдаа гарлаа.");
+      return;
+    }
+    setTypingOverrides((prev) => prev.filter((item) => item.id !== id));
+  }
 
   return (
     <div className="cn-app min-h-screen w-full" style={{ backgroundColor: "#F3EFE4" }}>
@@ -2917,7 +3236,7 @@ export default function ClassroomApp() {
           />
         </>
       ) : (
-        <div className={"mx-auto px-4 sm:px-6 py-6 " + (role === "teacher" && teacherTab === "results" ? "max-w-[1800px]" : "max-w-5xl")}>
+        <div className={"mx-auto px-4 sm:px-6 py-6 " + (role === "teacher" && teacherTab === "results" ? "max-w-[1800px]" : (role === "student" && studentTab === "lessons") || (role === "teacher" && teacherTab === "lesson") ? "max-w-6xl" : "max-w-5xl")}>
           <TopBar
             role={role}
             studentName={studentName}
@@ -3006,6 +3325,20 @@ export default function ClassroomApp() {
               headerSaving={headerSaving}
               onTeacherAvatar={changeTeacherAvatar}
               onSaveHeaderSettings={saveHeaderSettings}
+              typingCourse={typingCourse}
+              saveTypingDrill={saveTypingDrill}
+              resetTypingDrill={resetTypingDrill}
+              typingSavingId={typingSavingId}
+              typingEditError={typingEditError}
+              typingTableMissing={typingTableMissing}
+              updateSubjectGrade={updateSubjectGrade}
+              assignLessonSubject={assignLessonSubject}
+              lessonGroups={lessonGroups}
+              lessonGroupsMissing={lessonGroupsMissing}
+              addLessonGroup={addLessonGroup}
+              renameLessonGroup={renameLessonGroup}
+              deleteLessonGroup={deleteLessonGroup}
+              moveLessonToGroup={moveLessonToGroup}
             />
             </>
           )}
@@ -3015,6 +3348,7 @@ export default function ClassroomApp() {
               tab={studentTab}
               setTab={setStudentTab}
               lessons={lessons}
+              lessonGroups={lessonGroups}
               quizzes={quizzes}
               myAttempts={myAttempts}
               activeLesson={activeLesson}
@@ -3029,6 +3363,7 @@ export default function ClassroomApp() {
               studentUsername={studentSession?.username || ""}
               studentSession={studentSession}
               retakeGrants={retakeGrants}
+              typingCourse={typingCourse}
             />
           )}
         </div>
@@ -3524,7 +3859,9 @@ function TeacherHome({
   const weekdays = ["Ням", "Даваа", "Мягмар", "Лхагва", "Пүрэв", "Баасан", "Бямба"];
   const today = `${weekdays[now.getDay()]}, ${now.getMonth() + 1}-р сарын ${now.getDate()}`;
   const headerName = teacherHeaderName.trim();
-  const headerTitle = teacherHeaderTitle.trim() || HEADER_TITLE_DEFAULT;
+  const subjectTaught = teacherHeaderTitle.trim();
+  const headerTitle = subjectTeacherHeading(subjectTaught);
+  const subjectHeading = headerTitle !== HEADER_TITLE_DEFAULT;
   const headerSubtitle = teacherHeaderSubtitle.trim() || HEADER_SUBTITLE_DEFAULT;
   const stats = [
     { label: "Анги", value: classes.length },
@@ -3596,7 +3933,7 @@ function TeacherHome({
         {headerName ? (
           <p className="relative text-sm font-medium mt-3" style={{ color: "#FBF9F2" }}>{headerName}</p>
         ) : null}
-        <h2 className={"cn-hand relative text-5xl sm:text-6xl leading-none " + (headerName ? "mt-1" : "mt-2")}>{headerTitle}</h2>
+        <h2 className={"cn-hand relative " + (subjectHeading ? "text-4xl sm:text-5xl leading-tight " : "text-5xl sm:text-6xl leading-none ") + (headerName ? "mt-1" : "mt-2")}>{headerTitle}</h2>
         <p className="relative text-sm mt-3 max-w-md" style={{ color: "rgba(251,249,242,0.84)" }}>
           {headerSubtitle}
         </p>
@@ -3717,8 +4054,9 @@ function HeaderSettings({
   onBack,
 }) {
   const [name, setName] = useState(headerName);
-  const [title, setTitle] = useState(headerTitle || HEADER_TITLE_DEFAULT);
+  const [title, setTitle] = useState(headerTitle === HEADER_TITLE_DEFAULT ? "" : headerTitle);
   const [subtitle, setSubtitle] = useState(headerSubtitle || HEADER_SUBTITLE_DEFAULT);
+  const subjectPreview = subjectTeacherHeading(title);
 
   return (
     <div>
@@ -3764,13 +4102,19 @@ function HeaderSettings({
         />
         <p className="text-xs mb-4" style={{ color: "#6B6858" }}>Толгойн гарчгийн дээр харагдана. Хоосон бол нуугдана.</p>
 
-        <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Гарчиг</label>
+        <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Хичээл</label>
         <input
-          className="cn-input w-full px-3 py-2 text-sm mb-4"
+          className="cn-input w-full px-3 py-2 text-sm mb-1"
           value={title}
           maxLength={60}
+          placeholder="Жишээ: Математик"
           onChange={(e) => setTitle(e.target.value)}
         />
+        <p className="text-xs mb-4" style={{ color: "#6B6858" }}>
+          {title.trim()
+            ? `Толгой дээр «${subjectPreview}» гэж харагдана.`
+            : "Ямар хичээлийн багш болохоо бичнэ. Хоосон бол «Багшийн самбар» гэж харагдана."}
+        </p>
 
         <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Тайлбар</label>
         <textarea
@@ -3811,25 +4155,49 @@ function TeacherView(props) {
     headerSaving,
     onTeacherAvatar,
     onSaveHeaderSettings,
+    typingCourse = [],
+    saveTypingDrill,
+    resetTypingDrill,
+    typingSavingId,
+    typingEditError,
+    typingTableMissing,
+    updateSubjectGrade,
+    assignLessonSubject,
   } = props;
+  const [typingOpen, setTypingOpen] = useState(false);
+  const openTyping = () => setTypingOpen(true);
+  const typingWindow = typingOpen ? (
+    <TypingCourseWindow
+      course={typingCourse}
+      onSave={saveTypingDrill}
+      onReset={resetTypingDrill}
+      savingId={typingSavingId}
+      tableMissing={typingTableMissing}
+      error={typingEditError}
+      onClose={() => setTypingOpen(false)}
+    />
+  ) : null;
 
   if (tab === "home") {
     return (
-      <TeacherHome
-        setTab={setTab}
-        lessons={lessons}
-        quizzes={quizzes}
-        attempts={attempts}
-        classes={classes}
-        subjects={subjects}
-        students={students}
-        teacherEmail={teacherEmail}
-        teacherAvatarUrl={teacherAvatarUrl}
-        teacherHeaderName={teacherHeaderName}
-        teacherHeaderTitle={teacherHeaderTitle}
-        teacherHeaderSubtitle={teacherHeaderSubtitle}
-        avatarBusy={avatarBusy}
-      />
+      <>
+        <TeacherHome
+          setTab={setTab}
+          lessons={lessons}
+          quizzes={quizzes}
+          attempts={attempts}
+          classes={classes}
+          subjects={subjects}
+          students={students}
+          teacherEmail={teacherEmail}
+          teacherAvatarUrl={teacherAvatarUrl}
+          teacherHeaderName={teacherHeaderName}
+          teacherHeaderTitle={teacherHeaderTitle}
+          teacherHeaderSubtitle={teacherHeaderSubtitle}
+          avatarBusy={avatarBusy}
+        />
+        {typingWindow}
+      </>
     );
   }
 
@@ -3851,7 +4219,14 @@ function TeacherView(props) {
   }
 
   if (tab === "class") return <ClassBuilder {...props} />;
-  if (tab === "lesson") return <LessonBuilder {...props} />;
+  if (tab === "lesson") {
+    return (
+      <>
+        <LessonBuilder {...props} updateSubjectGrade={updateSubjectGrade} assignLessonSubject={assignLessonSubject} />
+        {typingWindow}
+      </>
+    );
+  }
   if (tab === "quiz") return <QuizBuilder {...props} />;
   if (tab === "results") return <ResultsTable {...props} />;
   return null;
@@ -4211,6 +4586,57 @@ function PptViewer({ url, name }) {
   );
 }
 
+function subjectNameKey(name) {
+  return String(name || "").trim().toLowerCase();
+}
+
+function materialMatchesSubject(material, subject, subjects) {
+  if (!material || !subject) return false;
+  if (material.subjectId) return material.subjectId === subject.id;
+  if (!subjectNameKey(material.subject) || subjectNameKey(material.subject) !== subjectNameKey(subject.name)) return false;
+  if (material.grade != null) return material.grade === subject.grade;
+  const named = subjects.filter((item) => subjectNameKey(item.name) === subjectNameKey(material.subject));
+  return named.length === 1;
+}
+
+function materialsForSubject(materials, subject, subjects) {
+  return materials.filter((material) => materialMatchesSubject(material, subject, subjects));
+}
+
+function normalizeFolderName(name) {
+  return String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function isTypingFolderName(name) {
+  const key = normalizeFolderName(name);
+  return key.includes("гарын хурууны зөв байрлалаар") && key.includes("бичих технологи");
+}
+
+function folderOpensTyping(groups, folder) {
+  const seen = new Set();
+  let current = folder;
+  while (current && !seen.has(current.id)) {
+    if (isTypingFolderName(current.name)) return true;
+    seen.add(current.id);
+    current = groups.find((item) => item.id === current.parentId) || null;
+  }
+  return false;
+}
+
+function descendantGroupIds(groups, rootId) {
+  const ids = [];
+  const queue = [rootId];
+  while (queue.length) {
+    const current = queue.pop();
+    groups.forEach((group) => {
+      if (group.parentId !== current) return;
+      ids.push(group.id);
+      queue.push(group.id);
+    });
+  }
+  return ids;
+}
+
 function LessonBuilder({
   setTab,
   lessonForm,
@@ -4222,185 +4648,809 @@ function LessonBuilder({
   subjects = [],
   addSubject,
   deleteSubject,
+  updateSubjectGrade,
+  assignLessonSubject,
+  lessonGroups = [],
+  lessonGroupsMissing = false,
+  addLessonGroup,
+  renameLessonGroup,
+  deleteLessonGroup,
+  moveLessonToGroup,
+  typingCourse = [],
+  saveTypingDrill,
+  resetTypingDrill,
+  typingSavingId,
+  typingTableMissing = false,
+  typingEditError = "",
 }) {
   const [subjectName, setSubjectName] = useState("");
+  const [addGrade, setAddGrade] = useState(6);
+  const [selectedSubjectId, setSelectedSubjectId] = useState(null);
+  const [selectedGroupId, setSelectedGroupId] = useState(null);
+  const [groupName, setGroupName] = useState("");
+  const [addingGroup, setAddingGroup] = useState(false);
+  const [folderGrade, setFolderGrade] = useState(null);
+  const [subgroupParentId, setSubgroupParentId] = useState(null);
+  const [folderDraft, setFolderDraft] = useState("");
   const [addingSubject, setAddingSubject] = useState(false);
   const [previewId, setPreviewId] = useState(null);
   const [fileError, setFileError] = useState("");
   const fileInputRef = useRef(null);
+  const slideCount = lessons.filter((l) => l.fileUrl || l.fileName).length;
+  const subjectGrades = [6, 7, 8, 9, 10, 11, 12];
+  const selectedSubject = subjects.find((s) => s.id === selectedSubjectId) || null;
   const canSave = Boolean(
-    lessonForm.title.trim()
-    && lessonForm.subject.trim()
+    selectedSubject
+    && lessonForm.subjectId === selectedSubject.id
+    && lessonForm.title.trim()
     && (lessonForm.content.trim() || lessonForm.file)
   );
+  const visibleLessons = selectedSubject
+    ? materialsForSubject(lessons, selectedSubject, subjects)
+    : [];
+  const subjectGroups = selectedSubject
+    ? lessonGroups
+      .filter((group) => (
+        group.subjectId === selectedSubject.id
+        || (!group.subjectId && group.grade === selectedSubject.grade)
+      ))
+      .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name, "mn"))
+    : [];
+  const activeGroup = lessonGroups.find((group) => group.id === selectedGroupId) || null;
+  const typingFolder = folderOpensTyping(lessonGroups, activeGroup);
+  const shownGroups = !activeGroup
+    ? subjectGroups
+    : [activeGroup, ...subjectGroups.filter((group) => descendantGroupIds(subjectGroups, activeGroup.id).includes(group.id))];
+  const ungroupedLessons = activeGroup
+    ? []
+    : visibleLessons.filter((item) => !subjectGroups.some((group) => group.id === item.groupId));
+  const looseLessons = lessons.filter((material) => !subjects.some((subject) => materialMatchesSubject(material, subject, subjects)));
+  const lessonStats = [
+    { label: "Хичээл", value: subjects.length },
+    { label: "Материал", value: lessons.length },
+    { label: "Танилцуулга", value: slideCount },
+  ];
+
+  useEffect(() => {
+    if (selectedSubjectId && subjects.some((s) => s.id === selectedSubjectId)) return;
+    const ranked = [...subjects].sort((a, b) => (a.grade || 99) - (b.grade || 99) || a.name.localeCompare(b.name, "mn"));
+    const first = ranked[0];
+    setSelectedSubjectId(first?.id || null);
+    setSelectedGroupId(null);
+    if (first) setLessonForm((f) => ({ ...f, subject: first.name, subjectId: first.id, grade: first.grade ?? null, groupId: null }));
+  }, [subjects, selectedSubjectId, setLessonForm]);
+
+  useEffect(() => {
+    if (!selectedGroupId) return;
+    if (!lessonGroups.some((group) => group.id === selectedGroupId)) setSelectedGroupId(null);
+  }, [lessonGroups, selectedGroupId]);
 
   async function handleAddSubject(e) {
     e?.preventDefault();
     if (!subjectName.trim() || addingSubject) return;
     setAddingSubject(true);
-    const ok = await addSubject?.(subjectName);
+    const created = await addSubject?.(subjectName, addGrade);
     setAddingSubject(false);
-    if (ok) setSubjectName("");
+    if (created?.id) {
+      setSubjectName("");
+      setSelectedSubjectId(created.id);
+      setSelectedGroupId(null);
+      setLessonForm((f) => ({ ...f, subject: created.name, subjectId: created.id, grade: created.grade ?? null, groupId: null }));
+    }
+  }
+
+  async function handleAddGroup(e) {
+    e?.preventDefault();
+    if (!groupName.trim() || addingGroup) return;
+    const parent = activeGroup && !activeGroup.subjectId ? activeGroup : null;
+    if (!parent && !selectedSubject?.grade) return;
+    setAddingGroup(true);
+    const created = await addLessonGroup?.({
+      grade: parent?.grade || selectedSubject.grade,
+      parentId: parent?.id || null,
+      name: groupName,
+    });
+    setAddingGroup(false);
+    if (created?.id) {
+      setGroupName("");
+      setSelectedGroupId(created.id);
+      setLessonForm((f) => ({ ...f, groupId: created.id }));
+    }
+  }
+
+  function renderGroupNav(subjectId) {
+    if (subjectId !== selectedSubjectId) return null;
+    if (!subjectGroups.length) return null;
+    return (
+      <div className="mt-1 ml-3 space-y-0.5">
+        <button
+          type="button"
+          onClick={() => setSelectedGroupId(null)}
+          className="w-full text-left rounded-md px-2 py-1 text-xs"
+          style={{
+            background: selectedGroupId ? "transparent" : "#EAEFF8",
+            color: "#24478F",
+          }}
+        >
+          Бүх материал
+        </button>
+        {subjectGroups.map((group) => {
+          const count = visibleLessons.filter((item) => item.groupId === group.id).length;
+          const active = group.id === selectedGroupId;
+          return (
+            <button
+              key={group.id}
+              type="button"
+              onClick={() => {
+                setSelectedGroupId(group.id);
+                setLessonForm((f) => ({ ...f, groupId: group.id }));
+              }}
+              className="w-full flex items-center justify-between gap-2 text-left rounded-md px-2 py-1 text-xs"
+              style={{
+                background: active ? "#EAEFF8" : "transparent",
+                color: "#2B2A25",
+              }}
+            >
+              <span className="inline-flex items-center gap-1 min-w-0">
+                <Folder size={12} className="shrink-0" />
+                <span className="truncate">{group.name}</span>
+              </span>
+              <span className="tabular-nums shrink-0" style={{ color: "#6B6858" }}>{count}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  function renderFolderBranch(folder, grade) {
+    const children = lessonGroups
+      .filter((item) => item.parentId === folder.id)
+      .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name, "mn"));
+    const folderActive = folder.id === selectedGroupId;
+    const typingLesson = isTypingFolderName(folder.name);
+    return (
+      <div key={folder.id} className="mb-1">
+        <div
+          className="flex items-center gap-1 rounded-lg pr-1"
+          style={{
+            background: folderActive ? "#EAEFF8" : "transparent",
+            border: "1px solid " + (folderActive ? "#24478F" : "transparent"),
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedGroupId(folder.id);
+              setLessonForm((f) => ({ ...f, groupId: folder.id }));
+            }}
+            className="flex-1 min-w-0 flex items-center gap-1 text-left px-2 py-1 text-xs"
+            style={{ color: "#2B2A25" }}
+          >
+            {typingLesson ? <Keyboard size={12} className="shrink-0" style={{ color: "#24478F" }} /> : <Folder size={12} className="shrink-0" style={{ color: "#24478F" }} />}
+            <span className="truncate">{folder.name}</span>
+          </button>
+          {typingLesson ? null : (
+          <button
+            type="button"
+            title="Дэд бүлэг үүсгэх"
+            onClick={() => {
+              setFolderGrade(null);
+              if (subgroupParentId === folder.id) {
+                setSubgroupParentId(null);
+                return;
+              }
+              setSubgroupParentId(folder.id);
+              setFolderDraft("");
+            }}
+            className="w-5 h-5 rounded inline-flex items-center justify-center shrink-0"
+            style={{
+              color: subgroupParentId === folder.id ? "#FBF9F2" : "#24478F",
+              background: subgroupParentId === folder.id ? "#24478F" : "transparent",
+            }}
+          >
+            <FolderPlus size={12} />
+          </button>
+          )}
+        </div>
+        {!typingLesson && subgroupParentId === folder.id ? (
+          <form
+            className="mt-1 ml-4 flex gap-1"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!folderDraft.trim() || addingGroup) return;
+              setAddingGroup(true);
+              const created = await addLessonGroup?.({ grade, parentId: folder.id, name: folderDraft });
+              setAddingGroup(false);
+              if (!created?.id) return;
+              setFolderDraft("");
+              setSubgroupParentId(null);
+              setSelectedGroupId(created.id);
+              setLessonForm((f) => ({ ...f, groupId: created.id }));
+            }}
+          >
+            <input
+              className="cn-input flex-1 min-w-0 px-2 py-1 text-xs"
+              placeholder="Дэд бүлгийн нэр"
+              value={folderDraft}
+              onChange={(e) => setFolderDraft(e.target.value)}
+              maxLength={80}
+              autoFocus
+            />
+            <button
+              type="submit"
+              disabled={!folderDraft.trim() || addingGroup}
+              className="cn-btn-primary rounded-md px-2 py-1 disabled:opacity-40 shrink-0"
+              title="Дэд бүлэг үүсгэх"
+            >
+              {addingGroup ? <Loader2 size={12} className="animate-spin" /> : <FolderPlus size={12} />}
+            </button>
+          </form>
+        ) : null}
+        {children.length > 0 ? (
+          <div className="mt-0.5 ml-4 space-y-0.5">
+            {children.map((child) => renderFolderBranch(child, grade))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderMaterialRow(item) {
+    const hasSlides = Boolean(item.fileUrl || item.fileName);
+    const Icon = hasSlides ? Presentation : BookOpen;
+    const groupLabel = subjectGroups.find((group) => group.id === item.groupId)?.name;
+    return (
+      <li key={item.id} className="py-3 border-b last:border-b-0" style={{ borderColor: "#E3DCC8" }}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <span
+              className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center"
+              style={{
+                background: hasSlides ? "#EAEFF8" : "#E4F0E9",
+                color: hasSlides ? "#24478F" : "#1F6B4A",
+              }}
+            >
+              <Icon size={18} />
+            </span>
+            <div className="min-w-0">
+              <div className="text-sm font-medium truncate">{item.title}</div>
+              <div className="text-xs truncate mt-0.5" style={{ color: "#6B6858" }}>
+                {groupLabel || "Бүлэггүй"}
+                {item.fileName ? ` · ${item.fileName}` : ""}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {subjectGroups.length > 0 ? (
+              <select
+                className="cn-select px-2 py-1 text-xs max-w-[9rem]"
+                value={item.groupId && subjectGroups.some((group) => group.id === item.groupId) ? item.groupId : ""}
+                onChange={(e) => moveLessonToGroup?.(item.id, e.target.value || null)}
+                aria-label="Бүлэг"
+              >
+                <option value="">Бүлэггүй</option>
+                {subjectGroups.filter((group) => !group.parentId).map((group) => (
+                  <option key={group.id} value={group.id}>{group.name}</option>
+                ))}
+                {subjectGroups.filter((group) => group.parentId).map((group) => {
+                  const parent = subjectGroups.find((item) => item.id === group.parentId);
+                  return (
+                    <option key={group.id} value={group.id}>{parent ? `${parent.name} · ` : ""}{group.name}</option>
+                  );
+                })}
+              </select>
+            ) : null}
+            {item.fileUrl ? (
+              <button
+                type="button"
+                onClick={() => setPreviewId((id) => (id === item.id ? null : item.id))}
+                className="text-xs font-semibold px-2.5 py-1 rounded-full"
+                style={{
+                  background: previewId === item.id ? "#24478F" : "#EAEFF8",
+                  color: previewId === item.id ? "#FBF9F2" : "#24478F",
+                }}
+              >
+                {previewId === item.id ? "Хаах" : "Харах"}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => deleteLesson(item.id)}
+              className="w-8 h-8 rounded-lg inline-flex items-center justify-center"
+              style={{ background: "#FBE7E4", color: "#9A3324" }}
+              title="Устгах"
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
+        </div>
+        {previewId === item.id && item.fileUrl ? <PptViewer url={item.fileUrl} name={item.fileName} /> : null}
+      </li>
+    );
   }
 
   return (
     <div>
-      <BackRow onBack={() => setTab("home")} title="Хичээлүүд" />
-      <div className="cn-card rounded-xl p-5 mb-6">
-        <h3 className="text-sm font-semibold mb-1" style={{ color: "#24478F" }}>Миний заах хичээлүүд</h3>
-        <p className="text-xs mb-3" style={{ color: "#6B6858" }}>
-          Энд үүсгэсэн хичээлүүд шалгалт болон хичээлийн материалд сонголтоор гарна.
-        </p>
-        <form onSubmit={handleAddSubject} className="flex flex-wrap gap-2 mb-3">
-          <input
-            className="cn-input flex-1 min-w-[12rem] px-3 py-2 text-sm"
-            placeholder="Жишээ: Математик"
-            value={subjectName}
-            onChange={(e) => setSubjectName(e.target.value)}
-            maxLength={80}
-          />
-          <button
-            type="submit"
-            disabled={!subjectName.trim() || addingSubject}
-            className="cn-btn-primary rounded-md px-4 py-2 text-sm font-medium disabled:opacity-40 flex items-center gap-1.5"
-          >
-            {addingSubject ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
-            Хичээл нэмэх
-          </button>
-        </form>
-        {subjects.length === 0 ? (
-          <p className="text-xs" style={{ color: "#6B6858" }}>Одоогоор хичээл үүсгээгүй байна.</p>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {subjects.map((s) => (
-              <span key={s.id} className="cn-tag inline-flex items-center gap-1.5">
-                {s.name}
-                <button
-                  type="button"
-                  onClick={() => deleteSubject?.(s.id)}
-                  className="leading-none"
-                  style={{ color: "#9A3324" }}
-                  title="Устгах"
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="cn-card rounded-xl p-5 mb-6">
-        <h3 className="text-sm font-semibold mb-3" style={{ color: "#24478F" }}>Хичээлийн материал</h3>
-        <input
-          className="cn-input w-full px-3 py-2 text-sm mb-3"
-          placeholder="Хичээлийн гарчиг"
-          value={lessonForm.title}
-          onChange={(e) => setLessonForm((f) => ({ ...f, title: e.target.value }))}
+      <section
+        className="relative overflow-hidden rounded-2xl px-6 py-7 sm:px-8 sm:py-8 mb-5"
+        style={{ background: "linear-gradient(135deg, #1c3670 0%, #24478F 58%, #3d62b0 100%)", color: "#FBF9F2" }}
+      >
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-12 -top-16 h-56 w-56 rounded-full"
+          style={{ background: "rgba(251,249,242,0.08)" }}
         />
-        <SubjectSelect
-          subjects={subjects}
-          value={lessonForm.subject}
-          onChange={(subject) => setLessonForm((f) => ({ ...f, subject }))}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -left-10 -bottom-16 h-40 w-40 rounded-full"
+          style={{ background: "rgba(251,249,242,0.06)" }}
         />
-        <textarea
-          className="cn-textarea w-full px-3 py-2 text-sm mb-3"
-          rows={8}
-          placeholder="Хичээлийн агуулга, тайлбар... (PowerPoint оруулбал хоосон байж болно)"
-          value={lessonForm.content}
-          onChange={(e) => setLessonForm((f) => ({ ...f, content: e.target.value }))}
-        />
-        <div className="mb-3">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0] || null;
-              e.target.value = "";
-              if (!file) return;
-              if (!lessonPresentationMeta(file)) {
-                setFileError("Зөвхөн PowerPoint файл (.ppt, .pptx) оруулна.");
-                return;
-              }
-              if (file.size > LESSON_FILE_MAX) {
-                setFileError("Файлын хэмжээ 50MB-аас бага байх ёстой.");
-                return;
-              }
-              setFileError("");
-              setLessonForm((f) => ({ ...f, file }));
-            }}
-          />
-          {lessonForm.file ? (
-            <div className="flex items-center justify-between gap-3 rounded-md px-3 py-2 text-sm" style={{ background: "#EAEFF8", color: "#24478F" }}>
-              <span className="inline-flex items-center gap-2 min-w-0">
-                <Presentation size={16} />
-                <span className="truncate">{lessonForm.file.name}</span>
-                <span className="text-xs shrink-0" style={{ color: "#6B6858" }}>{formatFileSize(lessonForm.file.size)}</span>
-              </span>
-              <button type="button" onClick={() => { setFileError(""); setLessonForm((f) => ({ ...f, file: null })); }} style={{ color: "#9A3324" }} title="Файл хасах">
-                <Trash2 size={14} />
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="cn-btn-secondary rounded-md px-3 py-2 text-sm font-medium inline-flex items-center gap-1.5"
-            >
-              <Presentation size={15} /> PowerPoint оруулах
-            </button>
-          )}
-          {fileError ? <p className="text-xs mt-2" style={{ color: "#9A3324" }}>{fileError}</p> : null}
-          <p className="text-xs mt-2" style={{ color: "#6B6858" }}>
-            .ppt, .pptx, 50MB хүртэл. Слайдын загвар, зураг, текст PowerPoint дээрхтэйгээ адил харагдана. Товшоод гардаг хөдөлгөөн, шилжилт, видео, дуу тоглогдохгүй.
-          </p>
-        </div>
         <button
-          onClick={addLesson}
-          disabled={!canSave || lessonSaving}
-          className="cn-btn-primary rounded-md px-4 py-2 text-sm font-medium disabled:opacity-40 flex items-center gap-1.5"
+          type="button"
+          onClick={() => setTab("home")}
+          className="relative inline-flex items-center gap-1.5 text-xs font-medium"
+          style={{ color: "rgba(251,249,242,0.84)" }}
         >
-          {lessonSaving ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
-          Материал хадгалах
+          <ArrowLeft size={14} />
+          Багшийн самбар
         </button>
-      </div>
-
-      <h3 className="text-sm font-semibold mb-3" style={{ color: "#6B6858" }}>Нэмэгдсэн материалууд ({lessons.length})</h3>
-      {lessons.length === 0 ? (
-        <EmptyState text="Одоогоор хичээлийн материал нэмээгүй байна." />
-      ) : (
-        <div className="space-y-2">
-          {lessons.map((l) => (
-            <div key={l.id} className="cn-card rounded-lg p-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <span className="cn-tag mr-2">{l.subject}</span>
-                  <span className="text-sm font-medium">{l.title}</span>
-                  {l.fileName ? (
-                    <div className="text-xs mt-1 truncate" style={{ color: "#6B6858" }}>PPT · {l.fileName}</div>
-                  ) : null}
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {l.fileUrl ? (
-                    <button
-                      type="button"
-                      onClick={() => setPreviewId((id) => (id === l.id ? null : l.id))}
-                      className="text-xs underline"
-                      style={{ color: "#24478F" }}
-                    >
-                      {previewId === l.id ? "Хаах" : "Харах"}
-                    </button>
-                  ) : null}
-                  <button onClick={() => deleteLesson(l.id)} style={{ color: "#9A3324" }}><Trash2 size={16} /></button>
-                </div>
-              </div>
-              {previewId === l.id && l.fileUrl ? <PptViewer url={l.fileUrl} name={l.fileName} /> : null}
+        <h2 className="cn-hand relative text-5xl sm:text-6xl leading-none mt-3">Хичээлүүд</h2>
+        <p className="relative text-sm mt-3 max-w-md" style={{ color: "rgba(251,249,242,0.84)" }}>
+          Заах хичээл, материал, танилцуулгаа нэг дороос удирдана.
+        </p>
+        <div className="relative grid grid-cols-3 gap-2.5 mt-6">
+          {lessonStats.map((s) => (
+            <div
+              key={s.label}
+              className="rounded-xl px-3.5 py-3"
+              style={{ background: "rgba(251,249,242,0.12)", border: "1px solid rgba(251,249,242,0.16)" }}
+            >
+              <div className="text-2xl font-semibold tabular-nums leading-none">{s.value}</div>
+              <div className="text-xs mt-1.5" style={{ color: "rgba(251,249,242,0.78)" }}>{s.label}</div>
             </div>
           ))}
         </div>
-      )}
+      </section>
+
+      <div className="grid lg:grid-cols-[280px_minmax(0,1fr)] gap-3 items-start">
+        <aside className="cn-card rounded-2xl p-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] overflow-y-auto">
+          <h3 className="font-semibold mb-3" style={{ color: "#2B2A25" }}>Хичээлийн жагсаалт</h3>
+          <form onSubmit={handleAddSubject} className="space-y-2 mb-4">
+            <select
+              className="cn-select w-full px-3 py-2 text-sm"
+              value={addGrade}
+              onChange={(e) => setAddGrade(Number(e.target.value))}
+            >
+              {subjectGrades.map((grade) => (
+                <option key={grade} value={grade}>{grade}-р анги</option>
+              ))}
+            </select>
+            <div className="flex gap-2">
+              <input
+                className="cn-input flex-1 min-w-0 px-3 py-2 text-sm"
+                placeholder="Жишээ: Математик"
+                value={subjectName}
+                onChange={(e) => setSubjectName(e.target.value)}
+                maxLength={80}
+              />
+              <button
+                type="submit"
+                disabled={!subjectName.trim() || addingSubject}
+                className="cn-btn-primary rounded-md px-3 py-2 text-sm font-medium disabled:opacity-40 shrink-0"
+                title="Нэмэх"
+              >
+                {addingSubject ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+              </button>
+            </div>
+          </form>
+          <div className="space-y-4">
+            {subjectGrades.map((grade) => {
+              const group = subjects
+                .filter((s) => s.grade === grade)
+                .sort((a, b) => a.name.localeCompare(b.name, "mn"));
+              return (
+                <div key={grade}>
+                  <div className="flex items-center justify-between mb-1.5 gap-2">
+                    <div className="flex items-center gap-1 min-w-0">
+                      <div className="text-xs font-semibold truncate" style={{ color: "#24478F" }}>{grade}-р анги</div>
+                      <button
+                        type="button"
+                        title="Бүлэг үүсгэх"
+                        onClick={() => {
+                          setSubgroupParentId(null);
+                          if (folderGrade === grade) {
+                            setFolderGrade(null);
+                            return;
+                          }
+                          setFolderGrade(grade);
+                          setFolderDraft("");
+                        }}
+                        className="w-5 h-5 rounded inline-flex items-center justify-center shrink-0"
+                        style={{ color: folderGrade === grade ? "#FBF9F2" : "#24478F", background: folderGrade === grade ? "#24478F" : "transparent" }}
+                      >
+                        <FolderPlus size={14} />
+                      </button>
+                    </div>
+                    <span className="text-xs tabular-nums shrink-0" style={{ color: "#6B6858" }}>{group.length}</span>
+                  </div>
+                  {folderGrade === grade ? (
+                    <form
+                      className="mb-2 space-y-1.5"
+                      onSubmit={async (e) => {
+                        e.preventDefault();
+                        if (!folderDraft.trim() || addingGroup) return;
+                        setAddingGroup(true);
+                        const created = await addLessonGroup?.({ grade, name: folderDraft });
+                        setAddingGroup(false);
+                        if (!created?.id) return;
+                        setFolderDraft("");
+                        setFolderGrade(null);
+                        setSelectedGroupId(created.id);
+                        setLessonForm((f) => ({ ...f, groupId: created.id }));
+                      }}
+                    >
+                      <div className="flex gap-1">
+                        <input
+                          className="cn-input flex-1 min-w-0 px-2 py-1 text-xs"
+                          placeholder="Бүлгийн нэр"
+                          value={folderDraft}
+                          onChange={(e) => setFolderDraft(e.target.value)}
+                          maxLength={80}
+                          autoFocus
+                        />
+                        <button
+                          type="submit"
+                          disabled={!folderDraft.trim() || addingGroup}
+                          className="cn-btn-primary rounded-md px-2 py-1 text-xs font-medium disabled:opacity-40 shrink-0"
+                          title="Бүлэг үүсгэх"
+                        >
+                          {addingGroup ? <Loader2 size={12} className="animate-spin" /> : <FolderPlus size={12} />}
+                        </button>
+                      </div>
+                    </form>
+                  ) : null}
+                  {lessonGroups
+                    .filter((item) => !item.parentId && !item.subjectId && item.grade === grade)
+                    .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name, "mn"))
+                    .map((folder) => renderFolderBranch(folder, grade))}
+                  {group.length === 0 ? (
+                    <p className="text-xs px-1" style={{ color: "#A39E8C" }}>Хичээл алга</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {group.map((s) => {
+                        const count = materialsForSubject(lessons, s, subjects).length;
+                        const active = s.id === selectedSubjectId;
+                        return (
+                          <div key={s.id}>
+                          <div
+                            className="flex items-center gap-1 rounded-lg pr-1"
+                            style={{
+                              background: active ? "#EAEFF8" : "transparent",
+                              border: "1px solid " + (active ? "#24478F" : "transparent"),
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedSubjectId(s.id);
+                                setSelectedGroupId(null);
+                                setAddGrade(grade);
+                                setLessonForm((f) => ({ ...f, subject: s.name, subjectId: s.id, grade: s.grade ?? null, groupId: null }));
+                              }}
+                              className="flex-1 min-w-0 text-left px-2.5 py-1.5"
+                            >
+                              <span className="block text-sm font-medium truncate" style={{ color: "#2B2A25" }}>{s.name}</span>
+                              <span className="block text-xs" style={{ color: "#6B6858" }}>{count} материал</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteSubject?.(s.id)}
+                              className="w-6 h-6 rounded-full inline-flex items-center justify-center shrink-0"
+                              style={{ color: "#9A3324" }}
+                              title="Устгах"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                          {renderGroupNav(s.id)}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {subjects.some((s) => !s.grade) ? (
+              <div>
+                <div className="text-xs font-semibold mb-1.5" style={{ color: "#6B6858" }}>Анги оноогоогүй</div>
+                <div className="space-y-1">
+                  {subjects.filter((s) => !s.grade).map((s) => {
+                    const active = s.id === selectedSubjectId;
+                    return (
+                      <div
+                        key={s.id}
+                        className="rounded-lg px-2.5 py-1.5"
+                        style={{
+                          background: active ? "#EAEFF8" : "transparent",
+                          border: "1px solid " + (active ? "#24478F" : "#E3DCC8"),
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedSubjectId(s.id);
+                            setSelectedGroupId(null);
+                            setLessonForm((f) => ({ ...f, subject: s.name, subjectId: s.id, grade: s.grade ?? null, groupId: null }));
+                          }}
+                          className="w-full text-left text-sm font-medium truncate"
+                          style={{ color: "#2B2A25" }}
+                        >
+                          {s.name}
+                        </button>
+                        <select
+                          className="cn-select w-full mt-1 px-2 py-1 text-xs"
+                          defaultValue=""
+                          onChange={(e) => {
+                            const grade = Number(e.target.value);
+                            if (grade) updateSubjectGrade?.(s.id, grade);
+                          }}
+                        >
+                          <option value="">Анги оноох</option>
+                          {subjectGrades.map((grade) => (
+                            <option key={grade} value={grade}>{grade}-р анги</option>
+                          ))}
+                        </select>
+                        {renderGroupNav(s.id)}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </aside>
+
+        <div className="space-y-3 min-w-0">
+        <section className="cn-card rounded-2xl p-5">
+          <div className="flex items-start gap-4 mb-4">
+            <span
+              className="shrink-0 w-11 h-11 rounded-xl flex items-center justify-center"
+              style={{ background: typingFolder ? "#E7F3F1" : "#EAEFF8", color: typingFolder ? "#1F6B4A" : "#24478F" }}
+            >
+              {typingFolder ? <Keyboard size={20} /> : <Presentation size={20} />}
+            </span>
+            <div className="min-w-0">
+              <h3 className="font-semibold" style={{ color: "#2B2A25" }}>{typingFolder ? "Арван хурууны дасгал" : "Хичээлийн материал"}</h3>
+              <p className="text-xs mt-0.5" style={{ color: "#6B6858" }}>
+                {typingFolder
+                  ? activeGroup.name
+                  : selectedSubject
+                    ? `${selectedSubject.grade ? `${selectedSubject.grade}-р анги · ` : ""}${selectedSubject.name}${activeGroup ? ` · ${activeGroup.name}` : ""}`
+                    : "Зүүн жагсаалтаас хичээл сонгоно"}
+              </p>
+            </div>
+          </div>
+          {typingFolder ? (
+            <>
+              {typingTableMissing ? (
+                <p className="text-xs mb-3" style={{ color: "#8A5A00" }}>
+                  Засвар хадгалахын тулд Supabase SQL Editor-т supabase-typing-drills.sql-ийг Run хийнэ.
+                </p>
+              ) : null}
+              {typingEditError ? <p className="text-xs mb-3" style={{ color: "#9A3324" }}>{typingEditError}</p> : null}
+              <TypingEditor course={typingCourse} onSave={saveTypingDrill} onReset={resetTypingDrill} savingId={typingSavingId} />
+            </>
+          ) : selectedSubject ? (
+            <>
+          <form onSubmit={handleAddGroup} className="flex gap-2 mb-3">
+            <input
+              className="cn-input flex-1 min-w-0 px-3 py-2 text-sm"
+              placeholder={activeGroup && !activeGroup.subjectId ? `${activeGroup.name} · дэд бүлэг` : "Бүлгийн нэр. Жишээ: 1-р бүлэг"}
+              value={groupName}
+              onChange={(e) => setGroupName(e.target.value)}
+              maxLength={80}
+            />
+            <button
+              type="submit"
+              disabled={!groupName.trim() || addingGroup}
+              className="cn-btn-secondary rounded-md px-3 py-2 text-sm font-medium disabled:opacity-40 shrink-0"
+            >
+              {addingGroup ? <Loader2 size={15} className="animate-spin" /> : (activeGroup && !activeGroup.subjectId ? "Дэд бүлэг нэмэх" : "Бүлэг нэмэх")}
+            </button>
+          </form>
+          {lessonGroupsMissing ? (
+            <p className="text-xs mb-3" style={{ color: "#8A5A00" }}>
+              Бүлэг хадгалагдахын тулд Supabase SQL Editor-т supabase-lesson-groups.sql-ийг Run хийнэ.
+            </p>
+          ) : null}
+          <select
+            className="cn-select w-full px-3 py-2 text-sm mb-3"
+            value={lessonForm.groupId && subjectGroups.some((group) => group.id === lessonForm.groupId) ? lessonForm.groupId : ""}
+            onChange={(e) => {
+              const groupId = e.target.value || null;
+              setSelectedGroupId(groupId);
+              setLessonForm((f) => ({ ...f, groupId }));
+            }}
+          >
+            <option value="">Бүлэггүй материал</option>
+            {subjectGroups.filter((group) => !group.parentId).map((group) => (
+              <option key={group.id} value={group.id}>{group.name}</option>
+            ))}
+            {subjectGroups.filter((group) => group.parentId).map((group) => {
+              const parent = subjectGroups.find((item) => item.id === group.parentId);
+              return (
+                <option key={group.id} value={group.id}>{parent ? `${parent.name} · ` : ""}{group.name}</option>
+              );
+            })}
+          </select>
+          <input
+            className="cn-input w-full px-3 py-2 text-sm mb-3"
+            placeholder="Хичээлийн гарчиг"
+            value={lessonForm.title}
+            onChange={(e) => setLessonForm((f) => ({ ...f, title: e.target.value }))}
+          />
+          <textarea
+            className="cn-textarea w-full px-3 py-2 text-sm mb-3"
+            rows={6}
+            placeholder="Хичээлийн агуулга, тайлбар... (PowerPoint оруулбал хоосон байж болно)"
+            value={lessonForm.content}
+            onChange={(e) => setLessonForm((f) => ({ ...f, content: e.target.value }))}
+          />
+          <div className="mb-4">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0] || null;
+                e.target.value = "";
+                if (!file) return;
+                if (!lessonPresentationMeta(file)) {
+                  setFileError("Зөвхөн PowerPoint файл (.ppt, .pptx) оруулна.");
+                  return;
+                }
+                if (file.size > LESSON_FILE_MAX) {
+                  setFileError("Файлын хэмжээ 50MB-аас бага байх ёстой.");
+                  return;
+                }
+                setFileError("");
+                setLessonForm((f) => ({ ...f, file }));
+              }}
+            />
+            {lessonForm.file ? (
+              <div className="flex items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-sm" style={{ background: "#EAEFF8", color: "#24478F" }}>
+                <span className="inline-flex items-center gap-2 min-w-0">
+                  <Presentation size={16} />
+                  <span className="truncate">{lessonForm.file.name}</span>
+                  <span className="text-xs shrink-0" style={{ color: "#6B6858" }}>{formatFileSize(lessonForm.file.size)}</span>
+                </span>
+                <button type="button" onClick={() => { setFileError(""); setLessonForm((f) => ({ ...f, file: null })); }} style={{ color: "#9A3324" }} title="Файл хасах">
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="cn-btn-secondary rounded-md px-3 py-2 text-sm font-medium inline-flex items-center gap-1.5"
+              >
+                <Presentation size={15} /> PowerPoint оруулах
+              </button>
+            )}
+            {fileError ? <p className="text-xs mt-2" style={{ color: "#9A3324" }}>{fileError}</p> : null}
+            <p className="text-xs mt-2" style={{ color: "#6B6858" }}>
+              .ppt, .pptx, 50MB хүртэл. Слайдын загвар, зураг, текст PowerPoint дээрхтэйгээ адил харагдана. Товшоод гардаг хөдөлгөөн, шилжилт, видео, дуу тоглогдохгүй.
+            </p>
+          </div>
+          <button
+            onClick={addLesson}
+            disabled={!canSave || lessonSaving}
+            className="cn-btn-primary rounded-md px-4 py-2 text-sm font-medium disabled:opacity-40 inline-flex items-center gap-1.5"
+          >
+            {lessonSaving ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+            Материал хадгалах
+          </button>
+            </>
+          ) : (
+            <p className="text-sm" style={{ color: "#6B6858" }}>Зүүн жагсаалтаас хичээл сонгоод материал нэмнэ.</p>
+          )}
+        </section>
+
+        {looseLessons.length > 0 ? (
+          <section className="cn-card rounded-2xl p-5">
+            <h3 className="font-semibold text-sm" style={{ color: "#2B2A25" }}>Аль ангид хамаарах нь тодорхойгүй</h3>
+            <p className="text-xs mt-1 mb-3" style={{ color: "#6B6858" }}>
+              Эдгээр материал хэд хэдэн ангид ижил нэртэй хичээлд таарч байна. Аль ангийн хичээлд үлдэхийг сонгоно.
+            </p>
+            <ul>
+              {looseLessons.map((material) => (
+                <li key={material.id} className="py-3 border-b last:border-b-0" style={{ borderColor: "#E3DCC8" }}>
+                  <div className="text-sm font-medium">{material.title}</div>
+                  <div className="text-xs mt-0.5 mb-2" style={{ color: "#6B6858" }}>{material.subject}</div>
+                  <select
+                    className="cn-select w-full px-3 py-2 text-sm"
+                    value=""
+                    onChange={(e) => {
+                      const subjectId = e.target.value;
+                      if (subjectId) assignLessonSubject?.(material.id, subjectId);
+                    }}
+                  >
+                    <option value="">Анги, хичээл сонгох</option>
+                    {subjects.map((subject) => (
+                      <option key={subject.id} value={subject.id}>
+                        {subject.grade ? `${subject.grade}-р анги · ` : "Ангигүй · "}{subject.name}
+                      </option>
+                    ))}
+                  </select>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+
+        {!typingFolder ? <section className="cn-card rounded-2xl p-5">
+        <div className="flex items-center justify-between gap-3 mb-1">
+          <h3 className="font-semibold text-sm" style={{ color: "#2B2A25" }}>Нэмэгдсэн материалууд</h3>
+          <span className="text-xs font-medium tabular-nums" style={{ color: "#1F6B4A" }}>
+            {activeGroup ? visibleLessons.filter((item) => item.groupId === activeGroup.id).length : visibleLessons.length}
+          </span>
+        </div>
+        {!selectedSubject ? (
+          <p className="text-sm py-3" style={{ color: "#6B6858" }}>Зүүн жагсаалтаас хичээл сонгоно уу.</p>
+        ) : shownGroups.length === 0 && ungroupedLessons.length === 0 ? (
+          <p className="text-sm py-3" style={{ color: "#6B6858" }}>Энэ хичээлд материал алга. Бүлэг нэмээд материалаа түүнд оруулна.</p>
+        ) : (
+          <div className="space-y-4">
+            {shownGroups.map((group) => {
+              const items = visibleLessons.filter((item) => item.groupId === group.id);
+              return (
+                <div key={group.id}>
+                  <div className="flex items-center gap-2">
+                    <input
+                      key={`${group.id}:${group.name}`}
+                      className="cn-input flex-1 min-w-0 px-2.5 py-1.5 text-sm font-medium"
+                      defaultValue={group.name}
+                      maxLength={80}
+                      aria-label="Бүлгийн нэр"
+                      onBlur={(e) => renameLessonGroup?.(group.id, e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") e.currentTarget.blur();
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => deleteLessonGroup?.(group.id)}
+                      className="w-8 h-8 rounded-lg inline-flex items-center justify-center shrink-0"
+                      style={{ background: "#FBE7E4", color: "#9A3324" }}
+                      title="Бүлгийг устгана. Материал нь бүлэггүй үлдэнэ."
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                  {items.length === 0 ? (
+                    <p className="text-xs py-2" style={{ color: "#A39E8C" }}>Энэ бүлэгт материал алга.</p>
+                  ) : (
+                    <ul>{items.map((item) => renderMaterialRow(item))}</ul>
+                  )}
+                </div>
+              );
+            })}
+            {ungroupedLessons.length > 0 ? (
+              <div>
+                {shownGroups.length > 0 ? (
+                  <div className="text-xs font-semibold mb-1" style={{ color: "#6B6858" }}>Бүлэггүй</div>
+                ) : null}
+                <ul>{ungroupedLessons.map((item) => renderMaterialRow(item))}</ul>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </section> : null}
+        </div>
+      </div>
     </div>
   );
 }
@@ -5448,8 +6498,114 @@ function ResultsTable({ setTab, attempts, quizzes = [], students = [], classes =
 
 /* ---------------- STUDENT ---------------- */
 
+function studentGradeGroups(groups, grade) {
+  const hasGrade = Number.isFinite(grade) && grade > 0;
+  return (groups || []).filter((item) => !item.subjectId && (!hasGrade || item.grade === grade));
+}
+
+function StudentLessonTree({ groups, grade, selectedId, onOpen }) {
+  const gradeGroups = studentGradeGroups(groups, grade);
+  function renderBranch(parentId, depth) {
+    const items = gradeGroups
+      .filter((item) => (parentId ? item.parentId === parentId : !item.parentId))
+      .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name, "mn"));
+    if (!items.length) return null;
+    return items.map((folder) => {
+      const active = folder.id === selectedId;
+      return (
+        <div key={folder.id} style={{ marginLeft: depth ? 14 : 0 }}>
+          <button
+            type="button"
+            onClick={() => onOpen(folder.id)}
+            className="w-full flex items-center gap-2 text-left rounded-lg px-2 py-1.5"
+            style={{ background: active ? "#EAEFF8" : "transparent" }}
+          >
+            {isTypingFolderName(folder.name) ? <Keyboard size={14} color="#1F6B4A" /> : <Folder size={14} color="#24478F" />}
+            <span className="text-sm truncate" style={{ color: "#2B2A25" }}>{folder.name}</span>
+          </button>
+          {renderBranch(folder.id, depth + 1)}
+        </div>
+      );
+    });
+  }
+  const tree = renderBranch(null, 0);
+  if (!tree) {
+    return <p className="text-sm" style={{ color: "#6B6858" }}>Жагсаалт алга. Багш анги дээрээ хичээл нэмсний дараа энд гарна.</p>;
+  }
+  return <div className="space-y-0.5">{tree}</div>;
+}
+
+function StudentFolderLessons({ studentId, grade, groups = [], materials = [], course, onOpenMaterial, onBack, folderId, setFolderId }) {
+  const hasGrade = Number.isFinite(grade) && grade > 0;
+  const gradeGroups = groups.filter((item) => !item.subjectId && (!hasGrade || item.grade === grade));
+  const selected = gradeGroups.find((item) => item.id === folderId) || null;
+  const branchIds = selected ? new Set([selected.id, ...descendantGroupIds(gradeGroups, selected.id)]) : null;
+  const folderMaterials = selected ? materials.filter((item) => branchIds.has(item.groupId)) : materials.filter((item) => !item.groupId);
+
+  const typingOpen = selected && folderOpensTyping(gradeGroups, selected);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onBack}
+        className="cn-btn-secondary rounded-md px-3 py-1.5 text-sm font-medium inline-flex items-center gap-1.5 mb-4"
+      >
+        <ArrowLeft size={14} /> Самбар
+      </button>
+      <h2 className="cn-hand text-4xl mb-4" style={{ color: "#24478F" }}>Хичээлүүд</h2>
+      <div className="grid lg:grid-cols-[280px_minmax(0,1fr)] gap-3 items-start">
+        <aside className="cn-card rounded-2xl p-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] overflow-y-auto">
+          <h3 className="font-semibold mb-3" style={{ color: "#2B2A25" }}>
+            Хичээлийн жагсаалт{hasGrade ? ` · ${grade}-р анги` : ""}
+          </h3>
+          <StudentLessonTree groups={groups} grade={grade} selectedId={folderId} onOpen={setFolderId} />
+        </aside>
+        <div className="min-w-0">
+          {typingOpen ? (
+            <TypingCourse
+              studentId={studentId}
+              materials={folderMaterials}
+              materialGroups={gradeGroups}
+              course={course}
+              onOpenMaterial={onOpenMaterial}
+            />
+          ) : selected ? (
+            folderMaterials.length > 0 ? (
+              <div className="grid sm:grid-cols-2 gap-3">
+                {folderMaterials.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onOpenMaterial?.(item)}
+                    className="cn-card rounded-lg p-4 text-left"
+                  >
+                    <span className="cn-tag">{item.grade ? `${item.grade}-р · ${item.subject}` : item.subject}</span>
+                    <div className="font-semibold mt-2">{item.title}</div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm" style={{ color: "#6B6858" }}>Энэ хавтаст материал алга.</p>
+            )
+          ) : (
+            <p className="text-sm" style={{ color: "#6B6858" }}>Зүүн жагсаалтаас хичээл сонгоно.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StudentView(props) {
-  const { tab, setTab, lessons, quizzes, myAttempts, studentSession } = props;
+  const { tab, setTab, lessons, lessonGroups = [], quizzes, myAttempts, studentSession, setActiveLesson, typingCourse = TYPING_LESSONS } = props;
+  const [folderId, setFolderId] = useState(null);
+  const studentGrade = Number(studentSession?.grade);
+  const studentMaterials = (lessons || []).filter((material) => {
+    if (!Number.isFinite(studentGrade) || studentGrade <= 0) return true;
+    if (material.grade == null) return true;
+    return material.grade === studentGrade;
+  });
   const visibleQuizzes = (quizzes || []).filter((q) => quizVisibleToStudent(q, studentSession));
   const studentProps = { ...props, quizzes: visibleQuizzes };
 
@@ -5458,7 +6614,7 @@ function StudentView(props) {
       <div>
         <h2 className="cn-hand text-4xl mb-5" style={{ color: "#24478F" }}>Сурагчийн самбар</h2>
         <div className="grid sm:grid-cols-3 gap-4">
-          <NavCard icon={<BookOpen size={22} color="#24478F" />} label="Хичээлүүд" sub={`${lessons.length} хичээл`} onClick={() => setTab("lessons")} />
+          <NavCard icon={<BookOpen size={22} color="#24478F" />} label="Хичээлүүд" sub="Хичээлийн жагсаалт" onClick={() => { setFolderId(null); setTab("lessons"); }} />
           <NavCard icon={<ClipboardList size={22} color="#24478F" />} label="Шалгалтууд" sub={`${visibleQuizzes.length} шалгалт`} onClick={() => setTab("quizzes")} />
           <NavCard icon={<Trophy size={22} color="#24478F" />} label="Миний онооны түүх" sub={`${myAttempts.length} оролдлого`} onClick={() => setTab("scores")} />
         </div>
@@ -5466,7 +6622,21 @@ function StudentView(props) {
     );
   }
 
-  if (tab === "lessons") return <LessonList {...studentProps} />;
+  if (tab === "lessons") {
+    return (
+      <StudentFolderLessons
+        studentId={studentSession?.username || studentSession?.id || "guest"}
+        grade={studentGrade}
+        groups={lessonGroups}
+        materials={studentMaterials}
+        course={typingCourse}
+        onOpenMaterial={(item) => { setActiveLesson(item); setTab("lesson"); }}
+        onBack={() => setTab("home")}
+        folderId={folderId}
+        setFolderId={setFolderId}
+      />
+    );
+  }
   if (tab === "lesson") return <LessonDetail {...studentProps} />;
   if (tab === "quizzes") return <QuizList {...studentProps} />;
   if (tab === "quiz") return <QuizTake {...studentProps} />;
@@ -5475,39 +6645,13 @@ function StudentView(props) {
   return null;
 }
 
-function LessonList({ setTab, lessons, setActiveLesson }) {
-  return (
-    <div>
-      <BackRow onBack={() => setTab("home")} title="Хичээлүүд" />
-      {lessons.length === 0 ? (
-        <EmptyState text="Одоогоор хичээл нэмэгдээгүй байна." />
-      ) : (
-        <div className="grid sm:grid-cols-2 gap-3">
-          {lessons.map((l) => (
-            <button key={l.id} onClick={() => { setActiveLesson(l); setTab("lesson"); }} className="cn-card rounded-lg p-4 text-left transition-transform hover:-translate-y-0.5">
-              <div className="flex items-center gap-2">
-                <span className="cn-tag">{l.subject}</span>
-                {l.fileUrl ? <span className="cn-tag">PPT</span> : null}
-              </div>
-              <div className="font-semibold mt-2">{l.title}</div>
-              <div className="text-xs mt-1 line-clamp-2" style={{ color: "#6B6858" }}>
-                {l.fileName ? `PPT · ${l.fileName}` : `${(l.content || "").slice(0, 90)}...`}
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function LessonDetail({ setTab, activeLesson }) {
   if (!activeLesson) return null;
   return (
     <div>
       <BackRow onBack={() => setTab("lessons")} title={activeLesson.title} />
       <div className="cn-card rounded-xl p-6">
-        <span className="cn-tag">{activeLesson.subject}</span>
+        <span className="cn-tag">{activeLesson.grade ? `${activeLesson.grade}-р · ${activeLesson.subject}` : activeLesson.subject}</span>
         {activeLesson.fileUrl ? <PptViewer url={activeLesson.fileUrl} name={activeLesson.fileName} /> : null}
         {activeLesson.content ? (
           <p className="text-sm mt-4 whitespace-pre-wrap leading-relaxed">{activeLesson.content}</p>

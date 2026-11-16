@@ -62,6 +62,36 @@ create index if not exists subjects_teacher_id_idx on subjects(teacher_id);
 create unique index if not exists subjects_teacher_name_key
   on subjects (teacher_id, lower(name));
 
+alter table lessons add column if not exists subject_id uuid references subjects(id) on delete set null;
+alter table lessons add column if not exists grade int;
+alter table lessons drop constraint if exists lessons_grade_check;
+alter table lessons
+  add constraint lessons_grade_check
+  check (grade is null or (grade >= 6 and grade <= 12));
+create index if not exists lessons_subject_id_idx on lessons(subject_id);
+
+create table if not exists lesson_groups (
+  id uuid primary key default gen_random_uuid(),
+  teacher_id uuid not null references auth.users(id) on delete cascade,
+  subject_id uuid references subjects(id) on delete cascade,
+  grade int,
+  parent_id uuid references lesson_groups(id) on delete cascade,
+  name text not null,
+  position int not null default 0,
+  created_at timestamptz not null default now(),
+  constraint lesson_groups_grade_check check (grade is null or (grade >= 6 and grade <= 12))
+);
+create index if not exists lesson_groups_subject_id_idx on lesson_groups(subject_id);
+create index if not exists lesson_groups_parent_id_idx on lesson_groups(parent_id);
+create unique index if not exists lesson_groups_grade_name_key
+  on lesson_groups (teacher_id, grade, lower(name))
+  where parent_id is null and subject_id is null and grade is not null;
+create unique index if not exists lesson_groups_parent_name_key
+  on lesson_groups (parent_id, lower(name))
+  where parent_id is not null;
+alter table lessons add column if not exists group_id uuid references lesson_groups(id) on delete set null;
+create index if not exists lessons_group_id_idx on lessons(group_id);
+
 do $$
 begin
   if not exists (
@@ -108,6 +138,18 @@ create policy "Public read attempts" on attempts for select using (true);
 -- Бичих/устгах: зөвхөн нэвтэрсэн багш (Supabase Auth)
 create policy "Teachers insert lessons" on lessons for insert to authenticated with check (true);
 create policy "Teachers delete lessons" on lessons for delete to authenticated using (true);
+drop policy if exists "Teachers update lessons" on lessons;
+create policy "Teachers update lessons" on lessons for update to authenticated using (true) with check (true);
+
+alter table lesson_groups enable row level security;
+drop policy if exists "Public read lesson groups" on lesson_groups;
+drop policy if exists "Teachers insert own lesson groups" on lesson_groups;
+drop policy if exists "Teachers update own lesson groups" on lesson_groups;
+drop policy if exists "Teachers delete own lesson groups" on lesson_groups;
+create policy "Public read lesson groups" on lesson_groups for select using (true);
+create policy "Teachers insert own lesson groups" on lesson_groups for insert to authenticated with check (teacher_id = auth.uid());
+create policy "Teachers update own lesson groups" on lesson_groups for update to authenticated using (teacher_id = auth.uid()) with check (teacher_id = auth.uid());
+create policy "Teachers delete own lesson groups" on lesson_groups for delete to authenticated using (teacher_id = auth.uid());
 create policy "Teachers insert quizzes" on quizzes for insert to authenticated with check (true);
 create policy "Teachers update quizzes" on quizzes for update to authenticated using (true) with check (true);
 create policy "Teachers delete quizzes" on quizzes for delete to authenticated using (true);
