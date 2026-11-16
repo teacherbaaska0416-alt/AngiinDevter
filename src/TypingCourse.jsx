@@ -51,11 +51,11 @@ export function TypingCourseWindow({ course, onSave, onReset, savingId, tableMis
     >
       <div
         className="w-full max-w-6xl h-fit rounded-2xl p-4 sm:p-5 my-2"
-        style={{ background: "#F3EFE4", border: "1px solid #E3DCC8", boxShadow: "0 24px 60px rgba(16,28,58,0.28)" }}
+        style={{ background: "#F4F6FB", border: "1px solid #E6EAF2", boxShadow: "0 24px 60px rgba(16,28,58,0.28)" }}
       >
         <div className="flex items-center justify-between gap-3 mb-4">
           <div>
-            <div className="text-xs font-semibold" style={{ color: "#6B6858" }}>Багшийн засвар</div>
+            <div className="text-xs font-semibold" style={{ color: "#64748B" }}>Багшийн засвар</div>
             <div className="text-lg font-semibold" style={{ color: "#243044" }}>Арван хурууны дасгал</div>
           </div>
           <button type="button" onClick={onClose} className="cn-btn-secondary rounded-md px-3 py-1.5 text-sm font-medium inline-flex items-center gap-1.5">
@@ -115,7 +115,7 @@ export function TypingEditor({ course, onSave, onReset, savingId }) {
           if (!items.length) return null;
           return (
             <div key={section.id}>
-              <div className="text-xs font-semibold mb-1.5" style={{ color: "#6B6858" }}>{section.title}</div>
+              <div className="text-xs font-semibold mb-1.5" style={{ color: "#64748B" }}>{section.title}</div>
               <div className="space-y-1">
                 {items.map((lesson) => {
                   const active = lesson.id === selected.id;
@@ -127,14 +127,14 @@ export function TypingEditor({ course, onSave, onReset, savingId }) {
                       className="w-full text-left rounded-lg px-3 py-2"
                       style={{
                         background: active ? "#EAEFF8" : "#FFFEFA",
-                        border: "1px solid " + (active ? "#24478F" : "#E3DCC8"),
+                        border: "1px solid " + (active ? "#24478F" : "#E6EAF2"),
                       }}
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm font-medium truncate" style={{ color: "#243044" }}>{pad(lesson.n)}. {lesson.title}</span>
                         {lesson.edited ? <span className="cn-tag shrink-0">Зассан</span> : null}
                       </div>
-                      <div className="text-xs mt-0.5 truncate" style={{ color: "#6B6858" }}>{lesson.prompt}</div>
+                      <div className="text-xs mt-0.5 truncate" style={{ color: "#64748B" }}>{lesson.prompt}</div>
                     </button>
                   );
                 })}
@@ -159,8 +159,8 @@ export function TypingEditor({ course, onSave, onReset, savingId }) {
           });
         }}
       >
-        <div className="text-xs font-semibold mb-3" style={{ color: "#6B6858" }}>Дасгал {pad(selected.n)}</div>
-        <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Гарчиг</label>
+        <div className="text-xs font-semibold mb-3" style={{ color: "#64748B" }}>Дасгал {pad(selected.n)}</div>
+        <label className="text-sm font-medium block mb-1" style={{ color: "#0F172A" }}>Гарчиг</label>
         <input
           className="cn-input w-full px-3 py-2 text-sm mb-3"
           value={draft.title}
@@ -169,7 +169,7 @@ export function TypingEditor({ course, onSave, onReset, savingId }) {
         />
         <div className="grid sm:grid-cols-2 gap-3 mb-3">
           <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Картан дээрх үсэг</label>
+            <label className="text-sm font-medium block mb-1" style={{ color: "#0F172A" }}>Картан дээрх үсэг</label>
             <input
               className="cn-input w-full px-3 py-2 text-sm"
               value={draft.focus}
@@ -178,7 +178,7 @@ export function TypingEditor({ course, onSave, onReset, savingId }) {
             />
           </div>
           <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Зорилт, үг/мин</label>
+            <label className="text-sm font-medium block mb-1" style={{ color: "#0F172A" }}>Зорилт, үг/мин</label>
             <input
               className="cn-input w-full px-3 py-2 text-sm"
               type="number"
@@ -189,7 +189,7 @@ export function TypingEditor({ course, onSave, onReset, savingId }) {
             />
           </div>
         </div>
-        <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Зөвлөгөө</label>
+        <label className="text-sm font-medium block mb-1" style={{ color: "#0F172A" }}>Зөвлөгөө</label>
         <textarea
           className="cn-textarea w-full px-3 py-2 text-sm mb-3"
           rows={2}
@@ -197,7 +197,7 @@ export function TypingEditor({ course, onSave, onReset, savingId }) {
           value={draft.tip}
           onChange={(event) => setDraft((row) => ({ ...row, tip: event.target.value }))}
         />
-        <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Сурагчийн бичих текст</label>
+        <label className="text-sm font-medium block mb-1" style={{ color: "#0F172A" }}>Сурагчийн бичих текст</label>
         <textarea
           className="cn-textarea w-full px-3 py-2 text-sm"
           rows={6}
@@ -205,7 +205,7 @@ export function TypingEditor({ course, onSave, onReset, savingId }) {
           value={draft.prompt}
           onChange={(event) => setDraft((row) => ({ ...row, prompt: event.target.value }))}
         />
-        <p className="text-xs mt-1 mb-4" style={{ color: "#6B6858" }}>
+        <p className="text-xs mt-1 mb-4" style={{ color: "#64748B" }}>
           {draft.prompt.trim().length} үсэг. Сурагч энэ текстийг яг энэ дарааллаар бичнэ.
         </p>
         <div className="flex flex-wrap gap-2">
@@ -298,7 +298,7 @@ function TypingMap({ progress, materials, materialGroups = [], onOpen, onOpenMat
       <div
         className="rounded-2xl p-4 sm:p-6"
         style={{
-          background: "linear-gradient(180deg, #E4F1F4 0%, #F3F6F1 42%, #FBF9F2 100%)",
+          background: "linear-gradient(180deg, #E4F1F4 0%, #F3F6F1 42%, #FFFFFF 100%)",
           border: "1px solid #D5E2E4",
         }}
       >
@@ -379,7 +379,7 @@ function TypingMap({ progress, materials, materialGroups = [], onOpen, onOpenMat
                         className="w-full h-full min-h-[132px] rounded-xl px-2 py-2 text-center transition-transform disabled:cursor-not-allowed"
                         style={{
                           background: "#FFFEFA",
-                          border: isCurrent ? "2px solid #1C2430" : "1px solid #E3DCC8",
+                          border: isCurrent ? "2px solid #1C2430" : "1px solid #E6EAF2",
                           boxShadow: unlocked ? "0 8px 18px rgba(36,71,143,0.06)" : "none",
                           opacity: unlocked ? 1 : 0.55,
                         }}
@@ -396,7 +396,7 @@ function TypingMap({ progress, materials, materialGroups = [], onOpen, onOpenMat
                               <Star
                                 key={star}
                                 size={12}
-                                color={star <= row.stars ? "#C8962E" : "#E3DCC8"}
+                                color={star <= row.stars ? "#C8962E" : "#E6EAF2"}
                                 fill={star <= row.stars ? "#C8962E" : "transparent"}
                               />
                             ))}
@@ -414,7 +414,7 @@ function TypingMap({ progress, materials, materialGroups = [], onOpen, onOpenMat
 
       {materials.length > 0 ? (
         <div className="mt-8 space-y-5">
-          <h3 className="font-semibold" style={{ color: "#2B2A25" }}>Багшийн материал</h3>
+          <h3 className="font-semibold" style={{ color: "#0F172A" }}>Багшийн материал</h3>
           {materialSections(materials, materialGroups).map((section) => (
             <div key={section.id}>
               {section.name ? (
@@ -433,7 +433,7 @@ function TypingMap({ progress, materials, materialGroups = [], onOpen, onOpenMat
                       {item.fileUrl ? <span className="cn-tag">PPT</span> : null}
                     </div>
                     <div className="font-semibold mt-2">{item.title}</div>
-                    <div className="text-xs mt-1 line-clamp-2" style={{ color: "#6B6858" }}>
+                    <div className="text-xs mt-1 line-clamp-2" style={{ color: "#64748B" }}>
                       {item.fileName ? `PPT · ${item.fileName}` : `${(item.content || "").slice(0, 90)}`}
                     </div>
                   </button>
@@ -559,7 +559,7 @@ function TypingPractice({ lesson, nextLesson, onBack, onOpen, onDone }) {
           <ArrowLeft size={16} />
         </button>
         <div className="min-w-0">
-          <div className="text-xs font-semibold" style={{ color: "#6B6858" }}>Дасгал {pad(lesson.n)}</div>
+          <div className="text-xs font-semibold" style={{ color: "#64748B" }}>Дасгал {pad(lesson.n)}</div>
           <h2 className="text-xl sm:text-2xl font-semibold leading-tight" style={{ color: "#243044" }}>{lesson.title}</h2>
         </div>
       </div>
@@ -597,7 +597,7 @@ function TypingPractice({ lesson, nextLesson, onBack, onOpen, onDone }) {
         className="rounded-2xl px-4 py-6 sm:px-8 sm:py-8 outline-none"
         style={{
           background: "#FFFEFA",
-          border: "1px solid #E3DCC8",
+          border: "1px solid #E6EAF2",
           boxShadow: "0 10px 24px rgba(36,71,143,0.06)",
         }}
       >
@@ -612,7 +612,7 @@ function TypingPractice({ lesson, nextLesson, onBack, onOpen, onDone }) {
                 style={{
                   color: typed ? "#2F6F4E" : "#8A8678",
                   background: current ? (wrong ? "#FBE7E4" : "#EAEFF8") : "transparent",
-                  borderBottom: current ? "2px solid #24478F" : space ? "1px solid #E3DCC8" : "2px solid transparent",
+                  borderBottom: current ? "2px solid #24478F" : space ? "1px solid #E6EAF2" : "2px solid transparent",
                   borderRadius: 4,
                   display: space ? "inline-block" : undefined,
                   width: space ? "0.55em" : undefined,
@@ -653,7 +653,7 @@ function TypingPractice({ lesson, nextLesson, onBack, onOpen, onDone }) {
             {shiftSide ? ` · ${shiftSide === "left" ? "Зүүн" : "Баруун"} Shift дарж байгаад үсгээ дар` : ""}
           </div>
           <Keyboard nextChar={expected} />
-          <p className="text-xs mt-3" style={{ color: "#6B6858" }}>
+          <p className="text-xs mt-3" style={{ color: "#64748B" }}>
             Энд дарж бичнэ. Буруу үсэг тоологдоод зөв үсгийг хүлээнэ. 90% хүрвэл дараагийн дасгал нээгдэнэ.
           </p>
         </>
@@ -665,7 +665,7 @@ function TypingPractice({ lesson, nextLesson, onBack, onOpen, onDone }) {
 function Stat({ label, value }) {
   return (
     <div>
-      <div className="text-xs" style={{ color: "#6B6858" }}>{label}</div>
+      <div className="text-xs" style={{ color: "#64748B" }}>{label}</div>
       <div className="font-semibold tabular-nums" style={{ color: "#243044" }}>{value}</div>
     </div>
   );
@@ -691,7 +691,7 @@ function ResultCard({ lesson, result, nextLesson, onRetry, onOpen, onBack }) {
             <Star
               key={star}
               size={22}
-              color={star <= result.stars ? "#C8962E" : "#E3DCC8"}
+              color={star <= result.stars ? "#C8962E" : "#E6EAF2"}
               fill={star <= result.stars ? "#C8962E" : "transparent"}
             />
           ))}
@@ -734,16 +734,16 @@ function Keyboard({ nextChar }) {
                     width: key.wide ? 72 : key.space ? undefined : 40,
                     flex: key.space ? 1 : undefined,
                     background: hot ? "#24478F" : "#FFFEFA",
-                    color: hot ? "#FBF9F2" : "#243044",
-                    border: shiftHot ? "2px solid #C8962E" : "1px solid #E3DCC8",
-                    boxShadow: hot ? "none" : `inset 0 -3px 0 ${FINGER_COLOR[key.finger] || "#E3DCC8"}`,
+                    color: hot ? "#FFFFFF" : "#243044",
+                    border: shiftHot ? "2px solid #C8962E" : "1px solid #E6EAF2",
+                    boxShadow: hot ? "none" : `inset 0 -3px 0 ${FINGER_COLOR[key.finger] || "#E6EAF2"}`,
                   }}
                 >
                   {key.label}
                   {key.bump ? (
                     <span
                       className="absolute bottom-1.5 w-1 h-1 rounded-full"
-                      style={{ background: hot ? "#FBF9F2" : "#243044" }}
+                      style={{ background: hot ? "#FFFFFF" : "#243044" }}
                     />
                   ) : null}
                 </div>
@@ -757,9 +757,9 @@ function Keyboard({ nextChar }) {
             style={{
               width: 220,
               background: nextChar === " " ? "#24478F" : "#FFFEFA",
-              color: nextChar === " " ? "#FBF9F2" : "#243044",
-              border: "1px solid #E3DCC8",
-              boxShadow: nextChar === " " ? "none" : "inset 0 -3px 0 #6B6858",
+              color: nextChar === " " ? "#FFFFFF" : "#243044",
+              border: "1px solid #E6EAF2",
+              boxShadow: nextChar === " " ? "none" : "inset 0 -3px 0 #64748B",
             }}
           >
             Зай

@@ -6,6 +6,7 @@ import {
   Keyboard,
   ClipboardList,
   Trophy,
+  Swords,
   PencilLine,
   Plus,
   Trash2,
@@ -31,7 +32,7 @@ import {
   X,
   ChevronRight,
   Camera,
-  Settings,
+  LayoutDashboard,
   Folder,
   FolderPlus,
 } from "lucide-react";
@@ -40,6 +41,7 @@ import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { supabase, isSupabaseConfigured } from "./supabaseClient";
 import TypingCourse, { TypingCourseWindow, TypingEditor } from "./TypingCourse.jsx";
+import TulaanPage, { StudentBattleScreen } from "./Tulaan.jsx";
 import { TYPING_LESSONS, mergeTypingLessons } from "./typingCourse.js";
 
 GlobalWorkerOptions.workerSrc = pdfWorker;
@@ -1248,6 +1250,8 @@ export default function ClassroomApp() {
 
   const [teacherTab, setTeacherTab] = useState("home");
   const [studentTab, setStudentTab] = useState("home");
+  const [battleAttention, setBattleAttention] = useState(false);
+  const markBattle = useCallback((active) => setBattleAttention(Boolean(active)), []);
 
   const [activeLesson, setActiveLesson] = useState(null);
   const [activeQuiz, setActiveQuiz] = useState(null);
@@ -1484,7 +1488,7 @@ export default function ClassroomApp() {
         setQuizEditorOpen(false);
         return;
       }
-      if (raw === "quiz" || raw === "class" || raw === "lesson" || raw === "results" || raw === "header") {
+      if (raw === "quiz" || raw === "class" || raw === "lesson" || raw === "results" || raw === "header" || raw === "tulaan") {
         setTeacherTab(raw);
         setQuizEditorOpen(false);
         return;
@@ -1506,6 +1510,7 @@ export default function ClassroomApp() {
     else if (teacherTab === "class") next = "#/class";
     else if (teacherTab === "lesson") next = "#/lesson";
     else if (teacherTab === "results") next = "#/results";
+    else if (teacherTab === "tulaan") next = "#/tulaan";
     else if (teacherTab === "header") next = "#/header";
     if (window.location.hash !== next) {
       history.replaceState(null, "", `${window.location.pathname}${window.location.search}${next}`);
@@ -3038,34 +3043,33 @@ export default function ClassroomApp() {
   }
 
   return (
-    <div className="cn-app min-h-screen w-full" style={{ backgroundColor: "#F3EFE4" }}>
+    <div className="cn-app min-h-screen w-full" style={{ backgroundColor: "#F4F6FB" }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Inter:wght@400;500;600;700&display=swap');
-        .cn-app { font-family: 'Inter', sans-serif; color: #2B2A25; }
-        .cn-hand { font-family: 'Caveat', cursive; }
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+        .cn-app { font-family: 'Plus Jakarta Sans', sans-serif; color: #0F172A; background: #F4F6FB; }
+        .cn-hand { font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 700; letter-spacing: -0.035em; }
         .cn-paper {
-          background-color: #F3EFE4;
-          background-image:
-            linear-gradient(#DCE1E0 1px, transparent 1px),
-            linear-gradient(90deg, #DCE1E0 1px, transparent 1px);
-          background-size: 26px 26px;
+          background:
+            radial-gradient(900px 420px at 50% -80px, #E7EEFB 0%, transparent 70%),
+            #F4F6FB;
         }
         .cn-card {
-          background: #FBF9F2;
-          border: 1px solid #E3DCC8;
-          box-shadow: 2px 3px 0 rgba(36,71,143,0.08);
+          background: #FFFFFF;
+          border: 1px solid #E6EAF2;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 10px 28px rgba(15, 23, 42, 0.04);
         }
+        button.cn-card:hover { border-color: #C9D4EA; }
         .cn-btn-primary {
-          background: #24478F;
-          color: #FBF9F2;
+          background: #1D4ED8;
+          color: #FFFFFF;
         }
-        .cn-btn-primary:hover { background: #1c3670; }
+        .cn-btn-primary:hover { background: #1E40AF; }
         .cn-btn-secondary {
-          background: transparent;
-          border: 1.5px solid #24478F;
-          color: #24478F;
+          background: #FFFFFF;
+          border: 1px solid #C9D4EA;
+          color: #1D4ED8;
         }
-        .cn-btn-secondary:hover { background: #EAEFF8; }
+        .cn-btn-secondary:hover { background: #EAF0FB; }
         .cn-tag {
           font-family: 'Inter', sans-serif;
           font-size: 0.7rem;
@@ -3076,17 +3080,17 @@ export default function ClassroomApp() {
           padding: 2px 10px;
         }
         .cn-input, .cn-textarea, .cn-select {
-          background: #FFFEFA;
-          border: 1.5px solid #D8D0BA;
-          border-radius: 6px;
+          background: #FFFFFF;
+          border: 1px solid #D5DCE8;
+          border-radius: 10px;
         }
         .cn-input:focus, .cn-textarea:focus, .cn-select:focus {
           outline: none;
           border-color: #24478F;
         }
         .cn-option {
-          border: 1.5px solid #D8D0BA;
-          background: #FFFEFA;
+          border: 1px solid #D5DCE8;
+          background: #FFFFFF;
         }
         .cn-option.selected {
           border-color: #24478F;
@@ -3104,7 +3108,7 @@ export default function ClassroomApp() {
           width: 100%;
         }
         .cn-grade th, .cn-grade td {
-          border-bottom: 1px solid #E3DCC8;
+          border-bottom: 1px solid #E6EAF2;
           padding: 10px 8px;
           white-space: nowrap;
         }
@@ -3115,8 +3119,8 @@ export default function ClassroomApp() {
           font-weight: 600;
         }
         .cn-grade thead tr:last-child th {
-          background: #FBF9F2;
-          color: #6B6858;
+          background: #FFFFFF;
+          color: #64748B;
           font-size: 11px;
           font-weight: 600;
           border-bottom: 1.5px solid #C9D4EA;
@@ -3139,10 +3143,10 @@ export default function ClassroomApp() {
           z-index: 4;
         }
         .cn-grade tbody tr td {
-          background: #FFFEFA;
+          background: #FFFFFF;
         }
         .cn-grade tbody tr:nth-child(even) td {
-          background: #FBF9F2;
+          background: #FFFFFF;
         }
         .cn-grade tbody tr:hover td,
         .cn-grade tbody tr.cn-grade-open td {
@@ -3203,7 +3207,7 @@ export default function ClassroomApp() {
       {loading ? (
         <div className="flex flex-col items-center justify-center min-h-screen gap-3">
           <Loader2 className="animate-spin" size={32} color="#24478F" />
-          <p className="text-sm" style={{ color: "#6B6858" }}>Дэвтэр нээгдэж байна...</p>
+          <p className="text-sm" style={{ color: "#64748B" }}>Дэвтэр нээгдэж байна...</p>
         </div>
       ) : role === null ? (
         <>
@@ -3236,16 +3240,47 @@ export default function ClassroomApp() {
           />
         </>
       ) : (
-        <div className={"mx-auto px-4 sm:px-6 py-6 " + (role === "teacher" && teacherTab === "results" ? "max-w-[1800px]" : (role === "student" && studentTab === "lessons") || (role === "teacher" && teacherTab === "lesson") ? "max-w-6xl" : "max-w-5xl")}>
-          <TopBar
-            role={role}
-            studentName={studentName}
-            studentUsername={studentSession?.username}
-            studentClassName={studentSession?.className}
-            teacherEmail={teacherUser?.email}
-            exitLocked={role === "student" && studentTab === "quiz"}
-            onExit={exitToRoleSelect}
-          />
+        <div className="min-h-screen md:pl-72">
+          {role === "teacher" ? (
+            <TeacherSideNav
+              tab={teacherTab}
+              setTab={setTeacherTab}
+              email={teacherUser?.email || ""}
+              avatarUrl={teacherUser?.avatarUrl || ""}
+              avatarBusy={avatarBusy}
+              headerName={teacherUser?.headerName || ""}
+              headerTitle={teacherUser?.headerTitle || ""}
+              headerSubtitle={teacherUser?.headerSubtitle || ""}
+              onOpenHeader={() => setTeacherTab("header")}
+              onExit={exitToRoleSelect}
+            />
+          ) : (
+            <StudentSideNav
+              tab={studentTab}
+              setTab={setStudentTab}
+              name={studentName}
+              username={studentSession?.username || ""}
+              className={studentSession?.className || ""}
+              grade={studentSession?.grade}
+              locked={studentTab === "quiz"}
+              battleAttention={battleAttention}
+              onExit={exitToRoleSelect}
+            />
+          )}
+          {role === "teacher" ? (
+            <TeacherPageHeader
+              tab={teacherTab}
+              requests={loginRequests}
+              students={students}
+              classes={classes}
+              busyId={loginDecideBusy}
+              onApprove={(id) => decideLoginRequest(id, true)}
+              onReject={(id) => decideLoginRequest(id, false)}
+            />
+          ) : (
+            <StudentPageHeader tab={studentTab} />
+          )}
+          <div className="px-4 sm:px-8 py-6">
           {saveError && (
             <div className="mb-4 text-sm px-3 py-2 rounded flex items-center justify-between" style={{ background: "#FBE7E4", color: "#9A3324" }}>
               <span>{saveError}</span>
@@ -3344,7 +3379,8 @@ export default function ClassroomApp() {
           )}
 
           {role === "student" && (
-            <StudentView
+            <StudentBattleScreen studentId={studentSession?.id || ""} page={studentTab === "tulaan"} onActivity={markBattle}>
+            {studentTab === "tulaan" ? null : <StudentView
               tab={studentTab}
               setTab={setStudentTab}
               lessons={lessons}
@@ -3364,8 +3400,10 @@ export default function ClassroomApp() {
               studentSession={studentSession}
               retakeGrants={retakeGrants}
               typingCourse={typingCourse}
-            />
+            />}
+            </StudentBattleScreen>
           )}
+          </div>
         </div>
       )}
     </div>
@@ -3399,24 +3437,26 @@ function RoleSelect({
       <span
         role="img"
         aria-label="Ангийн Дэвтэр"
-        className="w-48 h-48 sm:w-56 sm:h-56 mb-4 block"
+        className="w-16 h-16 mb-5 block"
         style={{
-          backgroundColor: "#24478F",
+          backgroundColor: "#1D4ED8",
           WebkitMask: "url(/img/logo.png) center / contain no-repeat",
           mask: "url(/img/logo.png) center / contain no-repeat",
         }}
       />
-      <h1 className="cn-hand text-6xl mb-2" style={{ color: "#24478F" }}>Ангийн Дэвтэр</h1>
-      <p className="text-sm mb-10" style={{ color: "#6B6858" }}>Хичээл заах, шалгалт авах онлайн дэвтэр</p>
+      <h1 className="text-4xl font-bold tracking-tight mb-2" style={{ color: "#0F172A" }}>Ангийн Дэвтэр</h1>
+      <p className="text-sm mb-10" style={{ color: "#64748B" }}>Хичээл заах, шалгалт авах онлайн дэвтэр</p>
 
-      <div className="grid sm:grid-cols-2 gap-5 w-full max-w-2xl">
+      <div className="grid sm:grid-cols-2 gap-4 w-full max-w-3xl">
         <button
           onClick={onTeacher}
-          className="cn-card rounded-xl p-6 text-left transition-transform hover:-translate-y-0.5"
+          className="cn-card rounded-2xl p-6 text-left transition-transform hover:-translate-y-0.5"
         >
-          <GraduationCap size={28} color="#24478F" />
-          <div className="cn-hand text-3xl mt-3" style={{ color: "#24478F" }}>Багш</div>
-          <p className="text-sm mt-1" style={{ color: "#6B6858" }}>
+          <span className="w-11 h-11 rounded-xl flex items-center justify-center" style={{ background: "#EAF0FB", color: "#1D4ED8" }}>
+            <GraduationCap size={22} />
+          </span>
+          <div className="text-xl font-semibold mt-4" style={{ color: "#0F172A" }}>Багш</div>
+          <p className="text-sm mt-1 leading-relaxed" style={{ color: "#64748B" }}>
             Имэйл, нууц үгээр нэвтэрч анги үүсгэх, хичээл нэмэх, шалгалт үүсгэх
           </p>
         </button>
@@ -3427,11 +3467,13 @@ function RoleSelect({
             setStudentLoginError("");
             setShowNamePrompt(true);
           }}
-          className="cn-card rounded-xl p-6 text-left transition-transform hover:-translate-y-0.5"
+          className="cn-card rounded-2xl p-6 text-left transition-transform hover:-translate-y-0.5"
         >
-          <Users size={28} color="#24478F" />
-          <div className="cn-hand text-3xl mt-3" style={{ color: "#24478F" }}>Сурагч</div>
-          <p className="text-sm mt-1" style={{ color: "#6B6858" }}>
+          <span className="w-11 h-11 rounded-xl flex items-center justify-center" style={{ background: "#EAF0FB", color: "#1D4ED8" }}>
+            <Users size={22} />
+          </span>
+          <div className="text-xl font-semibold mt-4" style={{ color: "#0F172A" }}>Сурагч</div>
+          <p className="text-sm mt-1 leading-relaxed" style={{ color: "#64748B" }}>
             Бүртгэлтэй нэвтрэх нэрээрээ орж, багш зөвшөөрсний дараа хичээл унших, шалгалт өгөх
           </p>
         </button>
@@ -3448,7 +3490,7 @@ function RoleSelect({
               {teacherLoginError}
             </p>
           )}
-          <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Имэйл</label>
+          <label className="text-sm font-medium block mb-1" style={{ color: "#0F172A" }}>Имэйл</label>
           <input
             autoFocus
             type="email"
@@ -3458,7 +3500,7 @@ function RoleSelect({
             value={teacherEmail}
             onChange={(e) => setTeacherEmail(e.target.value)}
           />
-          <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Нууц үг</label>
+          <label className="text-sm font-medium block mb-1" style={{ color: "#0F172A" }}>Нууц үг</label>
           <input
             type="password"
             required
@@ -3479,7 +3521,7 @@ function RoleSelect({
             type="button"
             onClick={() => setShowTeacherLogin(false)}
             className="w-full text-xs mt-3 underline"
-            style={{ color: "#6B6858" }}
+            style={{ color: "#64748B" }}
           >
             Буцах
           </button>
@@ -3497,21 +3539,21 @@ function RoleSelect({
               {studentLoginError}
             </p>
           )}
-          <p className="text-sm font-medium" style={{ color: "#2B2A25" }}>
+          <p className="text-sm font-medium" style={{ color: "#0F172A" }}>
             {studentLoginRequest.studentName || studentLoginRequest.username}
           </p>
-          <p className="text-xs mt-1" style={{ color: "#6B6858" }}>
+          <p className="text-xs mt-1" style={{ color: "#64748B" }}>
             {studentLoginRequest.className ? `${studentLoginRequest.className} анги · ` : ""}
             @{studentLoginRequest.username}
           </p>
-          <p className="text-xs mt-3" style={{ color: "#6B6858" }}>
+          <p className="text-xs mt-3" style={{ color: "#64748B" }}>
             Багш зөвшөөрсний дараа автоматаар нэвтэрнэ. Энэ хуудсыг бүү хаагаарай.
           </p>
           <button
             type="button"
             onClick={onCancelStudentWait}
             className="w-full text-xs mt-4 underline"
-            style={{ color: "#6B6858" }}
+            style={{ color: "#64748B" }}
           >
             Цуцлах
           </button>
@@ -3527,7 +3569,7 @@ function RoleSelect({
               {studentLoginError}
             </p>
           )}
-          <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>
+          <label className="text-sm font-medium block mb-1" style={{ color: "#0F172A" }}>
             Нэвтрэх нэр
           </label>
           <input
@@ -3540,7 +3582,7 @@ function RoleSelect({
             autoCorrect="off"
             spellCheck={false}
           />
-          <p className="text-xs mb-4" style={{ color: "#6B6858" }}>
+          <p className="text-xs mb-4" style={{ color: "#64748B" }}>
             Багшийн өгсөн нэвтрэх нэрийг бичнэ (анги-дугаар, жишээ: 7a-12).
           </p>
           <button
@@ -3559,7 +3601,7 @@ function RoleSelect({
               setNameInput("");
             }}
             className="w-full text-xs mt-3 underline"
-            style={{ color: "#6B6858" }}
+            style={{ color: "#64748B" }}
           >
             Буцах
           </button>
@@ -3588,13 +3630,13 @@ function LoginRequestBanner({ requests, students = [], classes = [], busyId, onA
           const username = student?.username || r.username;
           const no = student?.studentNo;
           return (
-            <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2" style={{ background: "#FFFEFA", border: "1px solid #E3DCC8" }}>
+            <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2" style={{ background: "#FFFFFF", border: "1px solid #E6EAF2" }}>
               <div className="min-w-0">
                 <div className="text-sm font-medium">
                   {no != null ? `${no}. ` : ""}
                   {name}
                 </div>
-                <div className="text-xs" style={{ color: "#6B6858" }}>
+                <div className="text-xs" style={{ color: "#64748B" }}>
                   {className ? `${className} анги · ` : ""}@{username}
                   {r.createdAt ? ` · ${fmtDate(r.createdAt)}` : ""}
                 </div>
@@ -3626,10 +3668,383 @@ function LoginRequestBanner({ requests, students = [], classes = [], busyId, onA
   );
 }
 
+function TeacherPageHeader({ tab, requests = [], students = [], classes = [], busyId, onApprove, onReject }) {
+  const [open, setOpen] = useState(false);
+  const titles = {
+    home: "Самбар",
+    class: "Анги",
+    lesson: "Хичээл",
+    quiz: "Шалгалт",
+    results: "Үр дүн",
+    tulaan: "Тулаан",
+    header: "Толгойн тохиргоо",
+  };
+  const now = new Date();
+  const weekdays = ["Ням", "Даваа", "Мягмар", "Лхагва", "Пүрэв", "Баасан", "Бямба"];
+  const dateLabel = `${now.getFullYear()} оны ${now.getMonth() + 1}-р сарын ${now.getDate()}, ${weekdays[now.getDay()]}`;
+  const count = requests.length;
+  return (
+    <header
+      className="sticky top-0 z-20 flex items-center justify-between gap-4 px-4 sm:px-8 py-4"
+      style={{ background: "rgba(244,246,251,0.92)", borderBottom: "1px solid #E6EAF2", backdropFilter: "blur(10px)" }}
+    >
+      <h1 className="text-lg font-semibold tracking-tight" style={{ color: "#0F172A" }}>{titles[tab] || "Самбар"}</h1>
+      <div className="flex items-center gap-3 shrink-0">
+        <p className="text-sm font-medium" style={{ color: "#64748B" }}>{dateLabel}</p>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setOpen((value) => !value)}
+            className="relative flex h-9 w-9 items-center justify-center rounded-full"
+            style={{ background: "#FFFFFF", border: "1px solid #E6EAF2", color: "#1D4ED8" }}
+            title="Мэдэгдэл"
+            aria-label="Мэдэгдэл"
+          >
+            <Bell size={16} />
+            {count > 0 ? (
+              <span
+                className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full text-[10px] font-semibold leading-4 text-center"
+                style={{ background: "#9A3324", color: "#FFFFFF" }}
+              >
+                {count > 9 ? "9+" : count}
+              </span>
+            ) : null}
+          </button>
+          {open ? (
+            <div
+              className="absolute right-0 mt-2 w-80 max-w-[80vw] rounded-2xl p-3"
+              style={{ background: "#FFFFFF", border: "1px solid #E6EAF2", boxShadow: "0 16px 40px rgba(15,23,42,0.12)" }}
+            >
+              <div className="text-sm font-semibold mb-2" style={{ color: "#0F172A" }}>Мэдэгдэл</div>
+              {count === 0 ? (
+                <p className="text-sm py-3" style={{ color: "#64748B" }}>Шинэ мэдэгдэл алга.</p>
+              ) : (
+                <div className="space-y-2 max-h-72 overflow-y-auto">
+                  {requests.map((r) => {
+                    const student = (students || []).find((s) => s.id === r.studentId) || null;
+                    const className =
+                      (student && (classes || []).find((c) => c.id === student.classId)?.name) || r.className || "";
+                    const name = studentDisplayName(student) || r.studentName || r.username;
+                    const username = student?.username || r.username;
+                    return (
+                      <div key={r.id} className="rounded-xl px-3 py-2" style={{ background: "#F4F6FB" }}>
+                        <div className="text-sm font-medium" style={{ color: "#0F172A" }}>{name}</div>
+                        <div className="text-xs mt-0.5" style={{ color: "#64748B" }}>
+                          {className ? `${className} анги · ` : ""}@{username} нэвтрэхийг хүсэж байна
+                        </div>
+                        <div className="flex items-center gap-2 mt-2">
+                          <button
+                            type="button"
+                            disabled={busyId === r.id}
+                            onClick={() => onReject(r.id)}
+                            className="cn-btn-secondary rounded-md px-2.5 py-1 text-xs font-medium disabled:opacity-40"
+                          >
+                            Татгалзах
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busyId === r.id}
+                            onClick={() => onApprove(r.id)}
+                            className="cn-btn-primary rounded-md px-2.5 py-1 text-xs font-medium disabled:opacity-40"
+                          >
+                            Зөвшөөрөх
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function TeacherSideNav({ tab, setTab, email, avatarUrl, avatarBusy, headerName, headerTitle, headerSubtitle, onOpenHeader, onExit }) {
+  const items = [
+    { key: "home", label: "Самбар", icon: LayoutDashboard },
+    { key: "class", label: "Анги", icon: School },
+    { key: "lesson", label: "Хичээл", icon: PencilLine },
+    { key: "quiz", label: "Шалгалт", icon: ClipboardList },
+    { key: "tulaan", label: "Тулаан", icon: Swords },
+    { key: "results", label: "Үр дүн", icon: Trophy },
+  ];
+  const activeKey = items.some((item) => item.key === tab) ? tab : "";
+  const name = String(headerName || "").trim();
+  const title = subjectTeacherHeading(headerTitle);
+  const subtitle = String(headerSubtitle || "").trim() || HEADER_SUBTITLE_DEFAULT;
+  function ProfileCard() {
+    return (
+      <button
+        type="button"
+        onClick={onOpenHeader}
+        className="w-full rounded-2xl p-3 text-left"
+        style={{ background: "#F4F6FB", border: "1px solid #E6EAF2" }}
+        title="Толгойн тохиргоо"
+      >
+        <span className="flex items-center gap-3">
+          <ProfileMark email={email} avatarUrl={avatarUrl} busy={avatarBusy} size="sm" />
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold truncate" style={{ color: "#0F172A" }}>{name || "Багш"}</span>
+            <span className="block text-xs mt-0.5 leading-snug" style={{ color: "#1D4ED8" }}>{title}</span>
+          </span>
+        </span>
+        <span className="block text-xs mt-2 leading-relaxed line-clamp-3" style={{ color: "#64748B" }}>{subtitle}</span>
+      </button>
+    );
+  }
+  return (
+    <>
+      <aside
+        className="hidden md:flex fixed inset-y-0 left-0 z-30 w-72 flex-col px-3 py-4"
+        style={{ background: "#FFFFFF", borderRight: "1px solid #E6EAF2" }}
+      >
+        <div className="mb-4"><ProfileCard /></div>
+        <nav className="flex flex-col gap-1">
+          {items.map((item) => {
+            const Icon = item.icon;
+            const active = item.key === activeKey;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => setTab(item.key)}
+                className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-left"
+                style={{
+                  background: active ? "#EAF0FB" : "transparent",
+                  color: active ? "#1D4ED8" : "#334155",
+                }}
+              >
+                <Icon size={18} />
+                {item.label}
+              </button>
+            );
+          })}
+        </nav>
+        <button
+          type="button"
+          onClick={onExit}
+          className="cn-btn-secondary mt-auto flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold"
+        >
+          <ArrowLeft size={16} />
+          Гарах
+        </button>
+      </aside>
+      <div className="md:hidden px-4 pt-4" style={{ background: "#FFFFFF", borderBottom: "1px solid #E6EAF2" }}>
+        <ProfileCard />
+        <div className="flex gap-2 overflow-x-auto mt-3">
+        {items.map((item) => {
+          const Icon = item.icon;
+          const active = item.key === activeKey;
+          return (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => setTab(item.key)}
+              className="shrink-0 inline-flex items-center gap-1.5 rounded-full px-3 py-2 mb-3 text-xs font-medium"
+              style={{
+                background: active ? "#EAF0FB" : "#F8FAFC",
+                color: active ? "#1D4ED8" : "#334155",
+              }}
+            >
+              <Icon size={14} />
+              {item.label}
+            </button>
+          );
+        })}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function pageDateLabel() {
+  const now = new Date();
+  const weekdays = ["Ням", "Даваа", "Мягмар", "Лхагва", "Пүрэв", "Баасан", "Бямба"];
+  return `${now.getFullYear()} оны ${now.getMonth() + 1}-р сарын ${now.getDate()}, ${weekdays[now.getDay()]}`;
+}
+
+function StudentPageHeader({ tab }) {
+  const titles = {
+    home: "Самбар",
+    lessons: "Хичээл",
+    lesson: "Хичээл",
+    quizzes: "Шалгалт",
+    quiz: "Шалгалт",
+    "quiz-result": "Шалгалт",
+    tulaan: "Тулаан",
+    scores: "Үр дүн",
+  };
+  const [open, setOpen] = useState(false);
+  return (
+    <header
+      className="sticky top-0 z-20 flex items-center justify-between gap-4 px-4 sm:px-8 py-4"
+      style={{ background: "rgba(244,246,251,0.92)", borderBottom: "1px solid #E6EAF2", backdropFilter: "blur(10px)" }}
+    >
+      <h1 className="text-lg font-semibold tracking-tight" style={{ color: "#0F172A" }}>{titles[tab] || "Самбар"}</h1>
+      <div className="flex items-center gap-3 shrink-0">
+        <p className="text-sm font-medium" style={{ color: "#64748B" }}>{pageDateLabel()}</p>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setOpen((value) => !value)}
+            className="relative flex h-9 w-9 items-center justify-center rounded-full"
+            style={{ background: "#FFFFFF", border: "1px solid #E6EAF2", color: "#1D4ED8" }}
+            title="Мэдэгдэл"
+            aria-label="Мэдэгдэл"
+          >
+            <Bell size={16} />
+          </button>
+          {open ? (
+            <div
+              className="absolute right-0 mt-2 w-80 max-w-[80vw] rounded-2xl p-3"
+              style={{ background: "#FFFFFF", border: "1px solid #E6EAF2", boxShadow: "0 16px 40px rgba(15,23,42,0.12)" }}
+            >
+              <div className="text-sm font-semibold mb-2" style={{ color: "#0F172A" }}>Мэдэгдэл</div>
+              <p className="text-sm py-3" style={{ color: "#64748B" }}>Шинэ мэдэгдэл алга.</p>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function StudentSideNav({ tab, setTab, name, username, className, grade, locked, onExit, battleAttention }) {
+  const items = [
+    { key: "home", label: "Самбар", icon: LayoutDashboard },
+    { key: "lessons", label: "Хичээл", icon: PencilLine },
+    { key: "quizzes", label: "Шалгалт", icon: ClipboardList },
+    { key: "tulaan", label: "Тулаан", icon: Swords },
+    { key: "scores", label: "Үр дүн", icon: Trophy },
+  ];
+  const activeKey = tab === "lesson" ? "lessons" : tab === "quiz" || tab === "quiz-result" ? "quizzes" : tab;
+  const [warn, setWarn] = useState(false);
+  const classLine = [Number.isFinite(Number(grade)) && Number(grade) > 0 ? `${Number(grade)}-р анги` : "", className].filter(Boolean).join(" · ");
+  function go(key) {
+    if (locked) {
+      setWarn(true);
+      return;
+    }
+    if (key) setTab(key);
+  }
+  function exit() {
+    if (locked) {
+      setWarn(true);
+      return;
+    }
+    onExit();
+  }
+  function ProfileCard() {
+    return (
+      <div className="w-full rounded-2xl p-3 text-left" style={{ background: "#F4F6FB", border: "1px solid #E6EAF2" }}>
+        <span className="flex items-center gap-3">
+          <ProfileMark email={name || "С"} size="sm" />
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold truncate" style={{ color: "#0F172A" }}>{name || "Сурагч"}</span>
+            <span className="block text-xs mt-0.5 leading-snug truncate" style={{ color: "#1D4ED8" }}>{classLine || "Сурагч"}</span>
+          </span>
+        </span>
+        <span className="block text-xs mt-2 leading-relaxed truncate" style={{ color: "#64748B" }}>
+          {username ? `@${username}` : "Хичээл, шалгалт, үр дүн"}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <>
+      {warn ? (
+        <NoticeModal
+          title="Шалгалт үргэлжилж байна"
+          text="Шалгалт эхэлсэн тул одоо гарах боломжгүй. Шалгалтыг дуусгах эсвэл хугацаа дуусахыг хүлээнэ үү."
+          onClose={() => setWarn(false)}
+        />
+      ) : null}
+      <aside
+        className="hidden md:flex fixed inset-y-0 left-0 z-30 w-72 flex-col px-3 py-4"
+        style={{ background: "#FFFFFF", borderRight: "1px solid #E6EAF2" }}
+      >
+        <div className="mb-4"><ProfileCard /></div>
+        <nav className="flex flex-col gap-1">
+          {items.map((item) => {
+            const Icon = item.icon;
+            const active = item.key === activeKey;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => go(item.key)}
+                className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-left"
+                style={{
+                  background: active ? "#EAF0FB" : "transparent",
+                  color: active ? "#1D4ED8" : "#334155",
+                }}
+              >
+                <Icon size={18} />
+                {item.label}
+                {item.key === "tulaan" && battleAttention && !active ? (
+                  <span className="ml-auto h-2 w-2 rounded-full" style={{ background: "#9A3324" }} />
+                ) : null}
+              </button>
+            );
+          })}
+        </nav>
+        <button
+          type="button"
+          onClick={exit}
+          className="cn-btn-secondary mt-auto flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold"
+        >
+          {locked ? <Lock size={16} /> : <ArrowLeft size={16} />}
+          Гарах
+        </button>
+      </aside>
+      <div className="md:hidden px-4 pt-4" style={{ background: "#FFFFFF", borderBottom: "1px solid #E6EAF2" }}>
+        <ProfileCard />
+        <div className="flex gap-2 overflow-x-auto mt-3">
+          {items.map((item) => {
+            const Icon = item.icon;
+            const active = item.key === activeKey;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => go(item.key)}
+                className="shrink-0 inline-flex items-center gap-1.5 rounded-full px-3 py-2 mb-3 text-xs font-medium"
+                style={{
+                  background: active ? "#EAF0FB" : "#F8FAFC",
+                  color: active ? "#1D4ED8" : "#334155",
+                }}
+              >
+                <Icon size={14} />
+                {item.label}
+                {item.key === "tulaan" && battleAttention && !active ? (
+                  <span className="h-1.5 w-1.5 rounded-full" style={{ background: "#9A3324" }} />
+                ) : null}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={exit}
+            className="shrink-0 inline-flex items-center gap-1.5 rounded-full px-3 py-2 mb-3 text-xs font-medium"
+            style={{ background: "#F8FAFC", color: "#334155" }}
+          >
+            {locked ? <Lock size={14} /> : <ArrowLeft size={14} />}
+            Гарах
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function TopBar({ role, studentName, studentUsername, studentClassName, teacherEmail, onExit, exitLocked }) {
   const [warn, setWarn] = useState(false);
   return (
-    <div className="flex items-center justify-between mb-6">
+    <div className="flex items-center justify-between mb-5 pb-4" style={{ borderBottom: "1px solid #E6EAF2" }}>
       <button
         type="button"
         onClick={() => {
@@ -3640,7 +4055,7 @@ function TopBar({ role, studentName, studentUsername, studentClassName, teacherE
           onExit();
         }}
         className="flex items-center gap-1.5 text-sm"
-        style={{ color: exitLocked ? "#A39E8C" : "#6B6858", cursor: exitLocked ? "not-allowed" : "pointer" }}
+        style={{ color: exitLocked ? "#94A3B8" : "#64748B", cursor: exitLocked ? "not-allowed" : "pointer" }}
         title={exitLocked ? "Шалгалт үргэлжилж байна" : "Гарах"}
       >
         {exitLocked ? <Lock size={16} /> : <ArrowLeft size={16} />} Гарах
@@ -3654,7 +4069,7 @@ function TopBar({ role, studentName, studentUsername, studentClassName, teacherE
       ) : null}
       <div className="flex items-center gap-2">
         {role === "student" && (
-          <span className="text-sm text-right" style={{ color: "#6B6858" }}>
+          <span className="text-sm text-right" style={{ color: "#64748B" }}>
             <strong>{studentName}</strong>
             {studentUsername ? (
               <span className="block text-xs">
@@ -3665,7 +4080,7 @@ function TopBar({ role, studentName, studentUsername, studentClassName, teacherE
           </span>
         )}
         {role === "teacher" && teacherEmail && (
-          <span className="text-sm" style={{ color: "#6B6858" }}>
+          <span className="text-sm" style={{ color: "#64748B" }}>
             Багш: <strong>{teacherEmail}</strong>
           </span>
         )}
@@ -3680,7 +4095,7 @@ function NoticeModal({ title, text, onClose }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: "rgba(43,42,37,0.35)" }}>
       <div className="cn-card rounded-xl p-5 w-full max-w-sm">
         <div className="font-semibold mb-2" style={{ color: "#24478F" }}>{title}</div>
-        <p className="text-sm mb-4" style={{ color: "#6B6858" }}>{text}</p>
+        <p className="text-sm mb-4" style={{ color: "#64748B" }}>{text}</p>
         <button type="button" onClick={onClose} className="cn-btn-primary w-full rounded-md py-2 text-sm font-medium">
           Ойлголоо
         </button>
@@ -3717,7 +4132,7 @@ function ImageLightbox({ src, onClose }) {
         type="button"
         onClick={onClose}
         className="absolute top-3 right-3 rounded-md p-2"
-        style={{ background: "#FBF9F2", color: "#24478F" }}
+        style={{ background: "#FFFFFF", color: "#24478F" }}
         title="Хаах"
         aria-label="Хаах"
       >
@@ -3730,7 +4145,7 @@ function ImageLightbox({ src, onClose }) {
         style={{
           maxHeight: "90vh",
           maxWidth: "94vw",
-          background: "#FFFEFA",
+          background: "#FFFFFF",
         }}
         onClick={(e) => e.stopPropagation()}
       />
@@ -3765,7 +4180,7 @@ function ZoomableImage({ src, className, style, alt = "" }) {
         <img src={src} alt={alt} className={className} style={style} />
         <span
           className="absolute bottom-1 right-1 rounded p-0.5 pointer-events-none"
-          style={{ background: "rgba(36,71,143,0.88)", color: "#FBF9F2" }}
+          style={{ background: "rgba(36,71,143,0.88)", color: "#FFFFFF" }}
         >
           <ZoomIn size={12} />
         </span>
@@ -3779,8 +4194,8 @@ function NavCard({ icon, label, sub, onClick }) {
   return (
     <button onClick={onClick} className="cn-card rounded-xl p-5 text-left transition-transform hover:-translate-y-0.5">
       {icon}
-      <div className="font-semibold mt-3" style={{ color: "#2B2A25" }}>{label}</div>
-      <div className="text-xs mt-1" style={{ color: "#6B6858" }}>{sub}</div>
+      <div className="font-semibold mt-3" style={{ color: "#0F172A" }}>{label}</div>
+      <div className="text-xs mt-1" style={{ color: "#64748B" }}>{sub}</div>
     </button>
   );
 }
@@ -3792,10 +4207,10 @@ function ProfileMark({ email, avatarUrl, busy, size = "md", tone = "light" }) {
   }, [avatarUrl]);
   const letter = (email || "Б").trim().charAt(0).toUpperCase();
   const showPhoto = Boolean(avatarUrl) && !broken;
-  const box = size === "lg" ? "h-20 w-20 text-2xl" : "h-14 w-14 sm:h-16 sm:w-16 text-xl";
+  const box = size === "lg" ? "h-20 w-20 text-2xl" : size === "sm" ? "h-11 w-11 text-base" : "h-14 w-14 sm:h-16 sm:w-16 text-xl";
   const frame = tone === "light"
-    ? { background: "rgba(251,249,242,0.16)", border: "2px solid rgba(251,249,242,0.85)", color: "#FBF9F2", boxShadow: "0 8px 18px rgba(16, 28, 58, 0.28)" }
-    : { background: "#EAEFF8", border: "2px solid #C9D4EA", color: "#24478F" };
+    ? { background: "#EAF0FB", border: "1px solid #C9D4EA", color: "#1D4ED8", boxShadow: "0 8px 18px rgba(29, 78, 216, 0.12)" }
+    : { background: "#EAEFF8", border: "1px solid #C9D4EA", color: "#24478F" };
   return (
     <span className={"relative block overflow-hidden rounded-full " + box} style={frame}>
       {showPhoto ? (
@@ -3811,30 +4226,10 @@ function ProfileMark({ email, avatarUrl, busy, size = "md", tone = "light" }) {
       )}
       {busy ? (
         <span className="absolute inset-0 flex items-center justify-center" style={{ background: tone === "light" ? "rgba(28,54,112,0.5)" : "rgba(251,249,242,0.72)" }}>
-          <Loader2 size={16} className="animate-spin" color={tone === "light" ? "#FBF9F2" : "#24478F"} />
+          <Loader2 size={16} className="animate-spin" color={tone === "light" ? "#FFFFFF" : "#24478F"} />
         </span>
       ) : null}
     </span>
-  );
-}
-
-function TeacherAvatar({ email, avatarUrl, busy, onClick }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="relative shrink-0 rounded-full"
-      title="Толгойн тохиргоо"
-      aria-label="Толгойн тохиргоо"
-    >
-      <ProfileMark email={email} avatarUrl={avatarUrl} busy={busy} />
-      <span
-        className="absolute -bottom-0.5 -right-0.5 flex h-6 w-6 items-center justify-center rounded-full"
-        style={{ background: "#FBF9F2", color: "#24478F", border: "1px solid #E3DCC8" }}
-      >
-        <Settings size={12} />
-      </span>
-    </button>
   );
 }
 
@@ -3846,23 +4241,9 @@ function TeacherHome({
   classes,
   subjects,
   students,
-  teacherEmail = "",
-  teacherAvatarUrl = "",
-  teacherHeaderName = "",
-  teacherHeaderTitle = "",
-  teacherHeaderSubtitle = "",
-  avatarBusy = false,
 }) {
   const openQuizzes = quizzes.filter((q) => q.isOpen).length;
   const recent = attempts.slice(0, 5);
-  const now = new Date();
-  const weekdays = ["Ням", "Даваа", "Мягмар", "Лхагва", "Пүрэв", "Баасан", "Бямба"];
-  const today = `${weekdays[now.getDay()]}, ${now.getMonth() + 1}-р сарын ${now.getDate()}`;
-  const headerName = teacherHeaderName.trim();
-  const subjectTaught = teacherHeaderTitle.trim();
-  const headerTitle = subjectTeacherHeading(subjectTaught);
-  const subjectHeading = headerTitle !== HEADER_TITLE_DEFAULT;
-  const headerSubtitle = teacherHeaderSubtitle.trim() || HEADER_SUBTITLE_DEFAULT;
   const stats = [
     { label: "Анги", value: classes.length },
     { label: "Сурагч", value: students.length },
@@ -3909,91 +4290,52 @@ function TeacherHome({
   ];
 
   return (
-    <div>
-    <div className="relative mb-5">
-      <section
-        className="relative overflow-hidden rounded-2xl px-6 py-7 sm:px-8 sm:py-8"
-        style={{ background: "linear-gradient(135deg, #1c3670 0%, #24478F 58%, #3d62b0 100%)", color: "#FBF9F2" }}
-      >
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -right-12 -top-16 h-56 w-56 rounded-full"
-          style={{ background: "rgba(251,249,242,0.08)" }}
-        />
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -left-10 -bottom-16 h-40 w-40 rounded-full"
-          style={{ background: "rgba(251,249,242,0.06)" }}
-        />
-        <div className="relative min-h-14 sm:min-h-16 pr-16">
-          <p className="text-xs font-medium uppercase tracking-[0.16em] pt-2" style={{ color: "rgba(251,249,242,0.72)" }}>
-            {today}
-          </p>
-        </div>
-        {headerName ? (
-          <p className="relative text-sm font-medium mt-3" style={{ color: "#FBF9F2" }}>{headerName}</p>
-        ) : null}
-        <h2 className={"cn-hand relative " + (subjectHeading ? "text-4xl sm:text-5xl leading-tight " : "text-5xl sm:text-6xl leading-none ") + (headerName ? "mt-1" : "mt-2")}>{headerTitle}</h2>
-        <p className="relative text-sm mt-3 max-w-md" style={{ color: "rgba(251,249,242,0.84)" }}>
-          {headerSubtitle}
-        </p>
-        <div className="relative grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-6">
+    <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
+      <div className="min-w-0">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {stats.map((s) => (
-            <div
-              key={s.label}
-              className="rounded-xl px-3.5 py-3"
-              style={{ background: "rgba(251,249,242,0.12)", border: "1px solid rgba(251,249,242,0.16)" }}
-            >
-              <div className="text-2xl font-semibold tabular-nums leading-none">{s.value}</div>
-              <div className="text-xs mt-1.5" style={{ color: "rgba(251,249,242,0.78)" }}>{s.label}</div>
+            <div key={s.label} className="cn-card rounded-2xl px-4 py-4">
+              <div className="text-2xl font-semibold tabular-nums leading-none" style={{ color: "#0F172A" }}>{s.value}</div>
+              <div className="text-xs mt-2" style={{ color: "#64748B" }}>{s.label}</div>
             </div>
           ))}
         </div>
-      </section>
-      <div className="absolute top-7 right-6 sm:top-8 sm:right-8 z-10">
-        <TeacherAvatar
-          email={teacherEmail}
-          avatarUrl={teacherAvatarUrl}
-          busy={avatarBusy}
-          onClick={() => setTab("header")}
-        />
-      </div>
-    </div>
 
-      <div className="grid sm:grid-cols-2 gap-3">
-        {actions.map((a) => {
-          const Icon = a.icon;
-          return (
-            <button
-              key={a.key}
-              type="button"
-              onClick={() => setTab(a.key)}
-              className="cn-card group rounded-2xl p-5 text-left flex items-start gap-4 transition-transform hover:-translate-y-0.5"
-            >
-              <span
-                className="shrink-0 w-11 h-11 rounded-xl flex items-center justify-center"
-                style={{ background: a.wash, color: a.tone }}
+        <div className="grid sm:grid-cols-2 gap-3 mt-4">
+          {actions.map((a) => {
+            const Icon = a.icon;
+            return (
+              <button
+                key={a.key}
+                type="button"
+                onClick={() => setTab(a.key)}
+                className="cn-card group rounded-2xl p-5 text-left flex flex-col min-h-[148px] transition-transform hover:-translate-y-0.5"
               >
-                <Icon size={20} />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="font-semibold block" style={{ color: "#2B2A25" }}>{a.label}</span>
-                <span className="text-xs block mt-0.5" style={{ color: "#6B6858" }}>{a.hint}</span>
-                <span className="text-xs font-medium block mt-2" style={{ color: a.tone }}>{a.stat}</span>
-              </span>
-              <ChevronRight
-                size={18}
-                className="shrink-0 mt-1 transition-transform group-hover:translate-x-0.5"
-                color="#A39E8C"
-              />
-            </button>
-          );
-        })}
+                <span className="flex items-center justify-between">
+                  <span
+                    className="w-11 h-11 rounded-xl flex items-center justify-center"
+                    style={{ background: a.wash, color: a.tone }}
+                  >
+                    <Icon size={20} />
+                  </span>
+                  <ChevronRight
+                    size={18}
+                    className="transition-transform group-hover:translate-x-0.5"
+                    color="#94A3B8"
+                  />
+                </span>
+                <span className="font-semibold text-lg mt-4 block" style={{ color: "#0F172A" }}>{a.label}</span>
+                <span className="text-sm block mt-1" style={{ color: "#64748B" }}>{a.hint}</span>
+                <span className="text-xs font-medium block mt-auto pt-4" style={{ color: a.tone }}>{a.stat}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      <section className="cn-card rounded-2xl p-5 mt-4">
+      <aside className="cn-card rounded-2xl p-5 xl:sticky xl:top-4">
         <div className="flex items-center justify-between gap-3 mb-3">
-          <h3 className="font-semibold text-sm" style={{ color: "#2B2A25" }}>Сүүлийн оролдлогууд</h3>
+          <h3 className="font-semibold text-sm" style={{ color: "#0F172A" }}>Сүүлийн оролдлогууд</h3>
           {attempts.length > 0 && (
             <button
               type="button"
@@ -4006,7 +4348,7 @@ function TeacherHome({
           )}
         </div>
         {recent.length === 0 ? (
-          <p className="text-sm py-3" style={{ color: "#6B6858" }}>
+          <p className="text-sm py-6 leading-relaxed" style={{ color: "#64748B" }}>
             Одоогоор шалгалтын оролдлого алга. Анги, шалгалтаа бэлдээд сурагчдаа нээж өгнө үү.
           </p>
         ) : (
@@ -4016,10 +4358,10 @@ function TeacherHome({
               const tone = pct >= 80 ? "#2F6F4E" : pct >= 50 ? "#24478F" : "#9A3324";
               const wash = pct >= 80 ? "#E4F0E9" : pct >= 50 ? "#EAEFF8" : "#FBE7E4";
               return (
-                <li key={a.id} className="flex items-center justify-between gap-3 py-2.5 border-b last:border-b-0" style={{ borderColor: "#E3DCC8" }}>
+                <li key={a.id} className="flex items-center justify-between gap-3 py-2.5 border-b last:border-b-0" style={{ borderColor: "#E6EAF2" }}>
                   <div className="min-w-0">
                     <div className="text-sm font-medium truncate">{a.studentName}</div>
-                    <div className="text-xs truncate" style={{ color: "#6B6858" }}>
+                    <div className="text-xs truncate" style={{ color: "#64748B" }}>
                       {a.quizTitle}
                       {a.subject ? ` · ${a.subject}` : ""}
                       {a.date ? ` · ${fmtDate(a.date)}` : ""}
@@ -4036,7 +4378,7 @@ function TeacherHome({
             })}
           </ul>
         )}
-      </section>
+      </aside>
     </div>
   );
 }
@@ -4072,8 +4414,8 @@ function HeaderSettings({
         <div className="flex items-center gap-4 mb-6">
           <ProfileMark email={email} avatarUrl={avatarUrl} busy={avatarBusy} size="lg" tone="dark" />
           <div className="min-w-0">
-            <div className="font-semibold" style={{ color: "#2B2A25" }}>Профайл зураг</div>
-            {email ? <div className="text-xs truncate mt-0.5" style={{ color: "#6B6858" }}>{email}</div> : null}
+            <div className="font-semibold" style={{ color: "#0F172A" }}>Профайл зураг</div>
+            {email ? <div className="text-xs truncate mt-0.5" style={{ color: "#64748B" }}>{email}</div> : null}
             <label className={"cn-btn-secondary mt-3 inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium " + (avatarBusy ? "opacity-50 pointer-events-none" : "cursor-pointer")}>
               {avatarBusy ? <Loader2 size={13} className="animate-spin" /> : <Camera size={13} />}
               Зураг солих
@@ -4092,7 +4434,7 @@ function HeaderSettings({
           </div>
         </div>
 
-        <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Харагдах нэр</label>
+        <label className="text-sm font-medium block mb-1" style={{ color: "#0F172A" }}>Харагдах нэр</label>
         <input
           className="cn-input w-full px-3 py-2 text-sm mb-1"
           value={name}
@@ -4100,9 +4442,9 @@ function HeaderSettings({
           placeholder="Жишээ: Н. Баасанжав"
           onChange={(e) => setName(e.target.value)}
         />
-        <p className="text-xs mb-4" style={{ color: "#6B6858" }}>Толгойн гарчгийн дээр харагдана. Хоосон бол нуугдана.</p>
+        <p className="text-xs mb-4" style={{ color: "#64748B" }}>Толгойн гарчгийн дээр харагдана. Хоосон бол нуугдана.</p>
 
-        <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Хичээл</label>
+        <label className="text-sm font-medium block mb-1" style={{ color: "#0F172A" }}>Хичээл</label>
         <input
           className="cn-input w-full px-3 py-2 text-sm mb-1"
           value={title}
@@ -4110,13 +4452,13 @@ function HeaderSettings({
           placeholder="Жишээ: Математик"
           onChange={(e) => setTitle(e.target.value)}
         />
-        <p className="text-xs mb-4" style={{ color: "#6B6858" }}>
+        <p className="text-xs mb-4" style={{ color: "#64748B" }}>
           {title.trim()
             ? `Толгой дээр «${subjectPreview}» гэж харагдана.`
             : "Ямар хичээлийн багш болохоо бичнэ. Хоосон бол «Багшийн самбар» гэж харагдана."}
         </p>
 
-        <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Тайлбар</label>
+        <label className="text-sm font-medium block mb-1" style={{ color: "#0F172A" }}>Тайлбар</label>
         <textarea
           className="cn-textarea w-full px-3 py-2 text-sm mb-5"
           rows={3}
@@ -4228,6 +4570,9 @@ function TeacherView(props) {
     );
   }
   if (tab === "quiz") return <QuizBuilder {...props} />;
+  if (tab === "tulaan") {
+    return <TulaanPage students={students} classes={classes} typingCourse={typingCourse} />;
+  }
   if (tab === "results") return <ResultsTable {...props} />;
   return null;
 }
@@ -4317,7 +4662,7 @@ function ClassBuilder({
         />
 
         <div className="cn-card rounded-xl p-5 mb-4">
-          <div className="flex flex-wrap items-center gap-2 mb-4 text-sm" style={{ color: "#6B6858" }}>
+          <div className="flex flex-wrap items-center gap-2 mb-4 text-sm" style={{ color: "#64748B" }}>
             <span>Нэгдэх код:</span>
             <code className="font-semibold tracking-wider px-2 py-0.5 rounded" style={{ background: "#E5EAF5", color: "#24478F" }}>
               {activeClass.joinCode}
@@ -4327,7 +4672,7 @@ function ClassBuilder({
             </button>
           </div>
 
-          <label className="text-sm font-medium block mb-2" style={{ color: "#2B2A25" }}>Ганцаар нэмэх</label>
+          <label className="text-sm font-medium block mb-2" style={{ color: "#0F172A" }}>Ганцаар нэмэх</label>
           <div className="grid sm:grid-cols-2 gap-2 mb-2">
             <input
               className="cn-input w-full px-3 py-2 text-sm"
@@ -4343,7 +4688,7 @@ function ClassBuilder({
               onKeyDown={(e) => e.key === "Enter" && addStudentManual()}
             />
           </div>
-          <p className="text-xs mb-3" style={{ color: "#6B6858" }}>
+          <p className="text-xs mb-3" style={{ color: "#64748B" }}>
             Нэвтрэх нэр: <code>{slugifyMn(activeClass.name)}-12</code> (анги + дэс дугаар).
           </p>
           <button
@@ -4354,12 +4699,12 @@ function ClassBuilder({
             <Plus size={15} /> Нэмэх
           </button>
 
-          <div className="rounded-lg p-3" style={{ background: "#FFFEFA", border: "1px dashed #D8D0BA" }}>
+          <div className="rounded-lg p-3" style={{ background: "#FFFFFF", border: "1px dashed #D5DCE8" }}>
             <div className="flex flex-wrap items-center gap-2 mb-2">
               <FileSpreadsheet size={18} color="#24478F" />
               <span className="text-sm font-semibold" style={{ color: "#24478F" }}>Excel-ээс оруулах</span>
             </div>
-            <p className="text-xs mb-3" style={{ color: "#6B6858" }}>
+            <p className="text-xs mb-3" style={{ color: "#64748B" }}>
               .xlsx / .xls файл. Баганууд: <strong>№</strong>, <strong>Овог</strong>, <strong>Нэр</strong>
             </p>
             <div className="flex flex-wrap gap-2">
@@ -4399,7 +4744,7 @@ function ClassBuilder({
           </div>
         </div>
 
-        <h3 className="text-sm font-semibold mb-3" style={{ color: "#6B6858" }}>
+        <h3 className="text-sm font-semibold mb-3" style={{ color: "#64748B" }}>
           Бүртгэлтэй сурагчид ({classStudents.length})
         </h3>
         {classStudents.length > 0 ? (
@@ -4442,7 +4787,7 @@ function ClassBuilder({
                       {studentDisplayName(s)}
                     </div>
                     <div className="flex items-center gap-1.5 mt-0.5">
-                      <span className="text-xs" style={{ color: "#6B6858" }}>Нэвтрэх нэр:</span>
+                      <span className="text-xs" style={{ color: "#64748B" }}>Нэвтрэх нэр:</span>
                       <code className="text-xs font-semibold px-1.5 py-0.5 rounded" style={{ background: "#E5EAF5", color: "#24478F" }}>
                         {s.username}
                       </code>
@@ -4473,12 +4818,12 @@ function ClassBuilder({
     <div>
       <BackRow onBack={() => setTab("home")} title="Анги үүсгэх" />
       <div className="cn-card rounded-xl p-5 mb-6">
-        <p className="text-sm mb-4" style={{ color: "#6B6858" }}>
+        <p className="text-sm mb-4" style={{ color: "#64748B" }}>
           Ангийн дугаар болон үсгийг сонгоод хадгална. Дараа нь анги дээр дарж сурагчдаа бүртгэнэ.
         </p>
         <div className="grid sm:grid-cols-2 gap-3 mb-4">
           <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Анги</label>
+            <label className="text-sm font-medium block mb-1" style={{ color: "#0F172A" }}>Анги</label>
             <select
               className="cn-select w-full px-3 py-2 text-sm"
               value={classForm.grade}
@@ -4490,7 +4835,7 @@ function ClassBuilder({
             </select>
           </div>
           <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>Бүлэг</label>
+            <label className="text-sm font-medium block mb-1" style={{ color: "#0F172A" }}>Бүлэг</label>
             <select
               className="cn-select w-full px-3 py-2 text-sm"
               value={classForm.section}
@@ -4502,7 +4847,7 @@ function ClassBuilder({
             </select>
           </div>
         </div>
-        <div className="mb-4 text-sm" style={{ color: "#6B6858" }}>
+        <div className="mb-4 text-sm" style={{ color: "#64748B" }}>
           Нэр: <strong style={{ color: "#24478F" }}>{classForm.grade}{classForm.section}</strong>
         </div>
         <button
@@ -4513,7 +4858,7 @@ function ClassBuilder({
         </button>
       </div>
 
-      <h3 className="text-sm font-semibold mb-3" style={{ color: "#6B6858" }}>Миний ангиуд ({classes.length})</h3>
+      <h3 className="text-sm font-semibold mb-3" style={{ color: "#64748B" }}>Миний ангиуд ({classes.length})</h3>
       {classes.length === 0 ? (
         <EmptyState text="Одоогоор анги үүсгээгүй байна." />
       ) : (
@@ -4525,9 +4870,9 @@ function ClassBuilder({
                 <button type="button" onClick={() => openClass(c.id)} className="text-left min-w-0 flex-1">
                   <div className="text-sm font-medium" style={{ color: "#24478F" }}>{c.name} анги</div>
                   <div className="flex flex-wrap items-center gap-2 mt-1">
-                    <span className="text-xs" style={{ color: "#6B6858" }}>{count} сурагч</span>
-                    <span className="text-xs" style={{ color: "#6B6858" }}>·</span>
-                    <span className="text-xs" style={{ color: "#6B6858" }}>Код:</span>
+                    <span className="text-xs" style={{ color: "#64748B" }}>{count} сурагч</span>
+                    <span className="text-xs" style={{ color: "#64748B" }}>·</span>
+                    <span className="text-xs" style={{ color: "#64748B" }}>Код:</span>
                     <code className="text-xs font-semibold tracking-wider px-2 py-0.5 rounded" style={{ background: "#E5EAF5", color: "#24478F" }}>
                       {c.joinCode}
                     </code>
@@ -4573,7 +4918,7 @@ function PptViewer({ url, name }) {
           Бүтэн дэлгэц
         </a>
       </div>
-      <div className="rounded-lg overflow-hidden border" style={{ borderColor: "#E3DCC8", background: "#F7F4EC" }}>
+      <div className="rounded-lg overflow-hidden border" style={{ borderColor: "#E6EAF2", background: "#F8FAFC" }}>
         <iframe
           title={name || "PowerPoint"}
           src={officeEmbedUrl(url)}
@@ -4788,14 +5133,14 @@ function LessonBuilder({
               className="w-full flex items-center justify-between gap-2 text-left rounded-md px-2 py-1 text-xs"
               style={{
                 background: active ? "#EAEFF8" : "transparent",
-                color: "#2B2A25",
+                color: "#0F172A",
               }}
             >
               <span className="inline-flex items-center gap-1 min-w-0">
                 <Folder size={12} className="shrink-0" />
                 <span className="truncate">{group.name}</span>
               </span>
-              <span className="tabular-nums shrink-0" style={{ color: "#6B6858" }}>{count}</span>
+              <span className="tabular-nums shrink-0" style={{ color: "#64748B" }}>{count}</span>
             </button>
           );
         })}
@@ -4825,7 +5170,7 @@ function LessonBuilder({
               setLessonForm((f) => ({ ...f, groupId: folder.id }));
             }}
             className="flex-1 min-w-0 flex items-center gap-1 text-left px-2 py-1 text-xs"
-            style={{ color: "#2B2A25" }}
+            style={{ color: "#0F172A" }}
           >
             {typingLesson ? <Keyboard size={12} className="shrink-0" style={{ color: "#24478F" }} /> : <Folder size={12} className="shrink-0" style={{ color: "#24478F" }} />}
             <span className="truncate">{folder.name}</span>
@@ -4845,7 +5190,7 @@ function LessonBuilder({
             }}
             className="w-5 h-5 rounded inline-flex items-center justify-center shrink-0"
             style={{
-              color: subgroupParentId === folder.id ? "#FBF9F2" : "#24478F",
+              color: subgroupParentId === folder.id ? "#FFFFFF" : "#24478F",
               background: subgroupParentId === folder.id ? "#24478F" : "transparent",
             }}
           >
@@ -4901,7 +5246,7 @@ function LessonBuilder({
     const Icon = hasSlides ? Presentation : BookOpen;
     const groupLabel = subjectGroups.find((group) => group.id === item.groupId)?.name;
     return (
-      <li key={item.id} className="py-3 border-b last:border-b-0" style={{ borderColor: "#E3DCC8" }}>
+      <li key={item.id} className="py-3 border-b last:border-b-0" style={{ borderColor: "#E6EAF2" }}>
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <span
@@ -4915,7 +5260,7 @@ function LessonBuilder({
             </span>
             <div className="min-w-0">
               <div className="text-sm font-medium truncate">{item.title}</div>
-              <div className="text-xs truncate mt-0.5" style={{ color: "#6B6858" }}>
+              <div className="text-xs truncate mt-0.5" style={{ color: "#64748B" }}>
                 {groupLabel || "Бүлэггүй"}
                 {item.fileName ? ` · ${item.fileName}` : ""}
               </div>
@@ -4948,7 +5293,7 @@ function LessonBuilder({
                 className="text-xs font-semibold px-2.5 py-1 rounded-full"
                 style={{
                   background: previewId === item.id ? "#24478F" : "#EAEFF8",
-                  color: previewId === item.id ? "#FBF9F2" : "#24478F",
+                  color: previewId === item.id ? "#FFFFFF" : "#24478F",
                 }}
               >
                 {previewId === item.id ? "Хаах" : "Харах"}
@@ -4972,42 +5317,25 @@ function LessonBuilder({
 
   return (
     <div>
-      <section
-        className="relative overflow-hidden rounded-2xl px-6 py-7 sm:px-8 sm:py-8 mb-5"
-        style={{ background: "linear-gradient(135deg, #1c3670 0%, #24478F 58%, #3d62b0 100%)", color: "#FBF9F2" }}
-      >
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -right-12 -top-16 h-56 w-56 rounded-full"
-          style={{ background: "rgba(251,249,242,0.08)" }}
-        />
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -left-10 -bottom-16 h-40 w-40 rounded-full"
-          style={{ background: "rgba(251,249,242,0.06)" }}
-        />
+      <section className="mb-5">
         <button
           type="button"
           onClick={() => setTab("home")}
-          className="relative inline-flex items-center gap-1.5 text-xs font-medium"
-          style={{ color: "rgba(251,249,242,0.84)" }}
+          className="inline-flex items-center gap-1.5 text-sm font-medium"
+          style={{ color: "#64748B" }}
         >
           <ArrowLeft size={14} />
           Багшийн самбар
         </button>
-        <h2 className="cn-hand relative text-5xl sm:text-6xl leading-none mt-3">Хичээлүүд</h2>
-        <p className="relative text-sm mt-3 max-w-md" style={{ color: "rgba(251,249,242,0.84)" }}>
+        <h2 className="text-3xl font-bold tracking-tight mt-3" style={{ color: "#0F172A" }}>Хичээлүүд</h2>
+        <p className="text-sm mt-2 max-w-xl" style={{ color: "#64748B" }}>
           Заах хичээл, материал, танилцуулгаа нэг дороос удирдана.
         </p>
-        <div className="relative grid grid-cols-3 gap-2.5 mt-6">
+        <div className="grid grid-cols-3 gap-3 mt-5">
           {lessonStats.map((s) => (
-            <div
-              key={s.label}
-              className="rounded-xl px-3.5 py-3"
-              style={{ background: "rgba(251,249,242,0.12)", border: "1px solid rgba(251,249,242,0.16)" }}
-            >
-              <div className="text-2xl font-semibold tabular-nums leading-none">{s.value}</div>
-              <div className="text-xs mt-1.5" style={{ color: "rgba(251,249,242,0.78)" }}>{s.label}</div>
+            <div key={s.label} className="cn-card rounded-2xl px-4 py-4">
+              <div className="text-2xl font-semibold tabular-nums leading-none" style={{ color: "#0F172A" }}>{s.value}</div>
+              <div className="text-xs mt-2" style={{ color: "#64748B" }}>{s.label}</div>
             </div>
           ))}
         </div>
@@ -5015,7 +5343,7 @@ function LessonBuilder({
 
       <div className="grid lg:grid-cols-[280px_minmax(0,1fr)] gap-3 items-start">
         <aside className="cn-card rounded-2xl p-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] overflow-y-auto">
-          <h3 className="font-semibold mb-3" style={{ color: "#2B2A25" }}>Хичээлийн жагсаалт</h3>
+          <h3 className="font-semibold mb-3" style={{ color: "#0F172A" }}>Хичээлийн жагсаалт</h3>
           <form onSubmit={handleAddSubject} className="space-y-2 mb-4">
             <select
               className="cn-select w-full px-3 py-2 text-sm"
@@ -5067,12 +5395,12 @@ function LessonBuilder({
                           setFolderDraft("");
                         }}
                         className="w-5 h-5 rounded inline-flex items-center justify-center shrink-0"
-                        style={{ color: folderGrade === grade ? "#FBF9F2" : "#24478F", background: folderGrade === grade ? "#24478F" : "transparent" }}
+                        style={{ color: folderGrade === grade ? "#FFFFFF" : "#24478F", background: folderGrade === grade ? "#24478F" : "transparent" }}
                       >
                         <FolderPlus size={14} />
                       </button>
                     </div>
-                    <span className="text-xs tabular-nums shrink-0" style={{ color: "#6B6858" }}>{group.length}</span>
+                    <span className="text-xs tabular-nums shrink-0" style={{ color: "#64748B" }}>{group.length}</span>
                   </div>
                   {folderGrade === grade ? (
                     <form
@@ -5115,7 +5443,7 @@ function LessonBuilder({
                     .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name, "mn"))
                     .map((folder) => renderFolderBranch(folder, grade))}
                   {group.length === 0 ? (
-                    <p className="text-xs px-1" style={{ color: "#A39E8C" }}>Хичээл алга</p>
+                    <p className="text-xs px-1" style={{ color: "#94A3B8" }}>Хичээл алга</p>
                   ) : (
                     <div className="space-y-1">
                       {group.map((s) => {
@@ -5140,8 +5468,8 @@ function LessonBuilder({
                               }}
                               className="flex-1 min-w-0 text-left px-2.5 py-1.5"
                             >
-                              <span className="block text-sm font-medium truncate" style={{ color: "#2B2A25" }}>{s.name}</span>
-                              <span className="block text-xs" style={{ color: "#6B6858" }}>{count} материал</span>
+                              <span className="block text-sm font-medium truncate" style={{ color: "#0F172A" }}>{s.name}</span>
+                              <span className="block text-xs" style={{ color: "#64748B" }}>{count} материал</span>
                             </button>
                             <button
                               type="button"
@@ -5164,7 +5492,7 @@ function LessonBuilder({
             })}
             {subjects.some((s) => !s.grade) ? (
               <div>
-                <div className="text-xs font-semibold mb-1.5" style={{ color: "#6B6858" }}>Анги оноогоогүй</div>
+                <div className="text-xs font-semibold mb-1.5" style={{ color: "#64748B" }}>Анги оноогоогүй</div>
                 <div className="space-y-1">
                   {subjects.filter((s) => !s.grade).map((s) => {
                     const active = s.id === selectedSubjectId;
@@ -5174,7 +5502,7 @@ function LessonBuilder({
                         className="rounded-lg px-2.5 py-1.5"
                         style={{
                           background: active ? "#EAEFF8" : "transparent",
-                          border: "1px solid " + (active ? "#24478F" : "#E3DCC8"),
+                          border: "1px solid " + (active ? "#24478F" : "#E6EAF2"),
                         }}
                       >
                         <button
@@ -5185,7 +5513,7 @@ function LessonBuilder({
                             setLessonForm((f) => ({ ...f, subject: s.name, subjectId: s.id, grade: s.grade ?? null, groupId: null }));
                           }}
                           className="w-full text-left text-sm font-medium truncate"
-                          style={{ color: "#2B2A25" }}
+                          style={{ color: "#0F172A" }}
                         >
                           {s.name}
                         </button>
@@ -5222,8 +5550,8 @@ function LessonBuilder({
               {typingFolder ? <Keyboard size={20} /> : <Presentation size={20} />}
             </span>
             <div className="min-w-0">
-              <h3 className="font-semibold" style={{ color: "#2B2A25" }}>{typingFolder ? "Арван хурууны дасгал" : "Хичээлийн материал"}</h3>
-              <p className="text-xs mt-0.5" style={{ color: "#6B6858" }}>
+              <h3 className="font-semibold" style={{ color: "#0F172A" }}>{typingFolder ? "Арван хурууны дасгал" : "Хичээлийн материал"}</h3>
+              <p className="text-xs mt-0.5" style={{ color: "#64748B" }}>
                 {typingFolder
                   ? activeGroup.name
                   : selectedSubject
@@ -5325,7 +5653,7 @@ function LessonBuilder({
                 <span className="inline-flex items-center gap-2 min-w-0">
                   <Presentation size={16} />
                   <span className="truncate">{lessonForm.file.name}</span>
-                  <span className="text-xs shrink-0" style={{ color: "#6B6858" }}>{formatFileSize(lessonForm.file.size)}</span>
+                  <span className="text-xs shrink-0" style={{ color: "#64748B" }}>{formatFileSize(lessonForm.file.size)}</span>
                 </span>
                 <button type="button" onClick={() => { setFileError(""); setLessonForm((f) => ({ ...f, file: null })); }} style={{ color: "#9A3324" }} title="Файл хасах">
                   <Trash2 size={14} />
@@ -5341,7 +5669,7 @@ function LessonBuilder({
               </button>
             )}
             {fileError ? <p className="text-xs mt-2" style={{ color: "#9A3324" }}>{fileError}</p> : null}
-            <p className="text-xs mt-2" style={{ color: "#6B6858" }}>
+            <p className="text-xs mt-2" style={{ color: "#64748B" }}>
               .ppt, .pptx, 50MB хүртэл. Слайдын загвар, зураг, текст PowerPoint дээрхтэйгээ адил харагдана. Товшоод гардаг хөдөлгөөн, шилжилт, видео, дуу тоглогдохгүй.
             </p>
           </div>
@@ -5355,21 +5683,21 @@ function LessonBuilder({
           </button>
             </>
           ) : (
-            <p className="text-sm" style={{ color: "#6B6858" }}>Зүүн жагсаалтаас хичээл сонгоод материал нэмнэ.</p>
+            <p className="text-sm" style={{ color: "#64748B" }}>Зүүн жагсаалтаас хичээл сонгоод материал нэмнэ.</p>
           )}
         </section>
 
         {looseLessons.length > 0 ? (
           <section className="cn-card rounded-2xl p-5">
-            <h3 className="font-semibold text-sm" style={{ color: "#2B2A25" }}>Аль ангид хамаарах нь тодорхойгүй</h3>
-            <p className="text-xs mt-1 mb-3" style={{ color: "#6B6858" }}>
+            <h3 className="font-semibold text-sm" style={{ color: "#0F172A" }}>Аль ангид хамаарах нь тодорхойгүй</h3>
+            <p className="text-xs mt-1 mb-3" style={{ color: "#64748B" }}>
               Эдгээр материал хэд хэдэн ангид ижил нэртэй хичээлд таарч байна. Аль ангийн хичээлд үлдэхийг сонгоно.
             </p>
             <ul>
               {looseLessons.map((material) => (
-                <li key={material.id} className="py-3 border-b last:border-b-0" style={{ borderColor: "#E3DCC8" }}>
+                <li key={material.id} className="py-3 border-b last:border-b-0" style={{ borderColor: "#E6EAF2" }}>
                   <div className="text-sm font-medium">{material.title}</div>
-                  <div className="text-xs mt-0.5 mb-2" style={{ color: "#6B6858" }}>{material.subject}</div>
+                  <div className="text-xs mt-0.5 mb-2" style={{ color: "#64748B" }}>{material.subject}</div>
                   <select
                     className="cn-select w-full px-3 py-2 text-sm"
                     value=""
@@ -5393,15 +5721,15 @@ function LessonBuilder({
 
         {!typingFolder ? <section className="cn-card rounded-2xl p-5">
         <div className="flex items-center justify-between gap-3 mb-1">
-          <h3 className="font-semibold text-sm" style={{ color: "#2B2A25" }}>Нэмэгдсэн материалууд</h3>
+          <h3 className="font-semibold text-sm" style={{ color: "#0F172A" }}>Нэмэгдсэн материалууд</h3>
           <span className="text-xs font-medium tabular-nums" style={{ color: "#1F6B4A" }}>
             {activeGroup ? visibleLessons.filter((item) => item.groupId === activeGroup.id).length : visibleLessons.length}
           </span>
         </div>
         {!selectedSubject ? (
-          <p className="text-sm py-3" style={{ color: "#6B6858" }}>Зүүн жагсаалтаас хичээл сонгоно уу.</p>
+          <p className="text-sm py-3" style={{ color: "#64748B" }}>Зүүн жагсаалтаас хичээл сонгоно уу.</p>
         ) : shownGroups.length === 0 && ungroupedLessons.length === 0 ? (
-          <p className="text-sm py-3" style={{ color: "#6B6858" }}>Энэ хичээлд материал алга. Бүлэг нэмээд материалаа түүнд оруулна.</p>
+          <p className="text-sm py-3" style={{ color: "#64748B" }}>Энэ хичээлд материал алга. Бүлэг нэмээд материалаа түүнд оруулна.</p>
         ) : (
           <div className="space-y-4">
             {shownGroups.map((group) => {
@@ -5431,7 +5759,7 @@ function LessonBuilder({
                     </button>
                   </div>
                   {items.length === 0 ? (
-                    <p className="text-xs py-2" style={{ color: "#A39E8C" }}>Энэ бүлэгт материал алга.</p>
+                    <p className="text-xs py-2" style={{ color: "#94A3B8" }}>Энэ бүлэгт материал алга.</p>
                   ) : (
                     <ul>{items.map((item) => renderMaterialRow(item))}</ul>
                   )}
@@ -5441,7 +5769,7 @@ function LessonBuilder({
             {ungroupedLessons.length > 0 ? (
               <div>
                 {shownGroups.length > 0 ? (
-                  <div className="text-xs font-semibold mb-1" style={{ color: "#6B6858" }}>Бүлэггүй</div>
+                  <div className="text-xs font-semibold mb-1" style={{ color: "#64748B" }}>Бүлэггүй</div>
                 ) : null}
                 <ul>{ungroupedLessons.map((item) => renderMaterialRow(item))}</ul>
               </div>
@@ -5466,7 +5794,7 @@ function QuizImageField({ imageUrl, onUploaded, onClear, uploadFn, compact }) {
           <ZoomableImage
             src={imageUrl}
             className={"rounded-md object-contain border " + (compact ? "max-h-24" : "max-h-44")}
-            style={{ borderColor: "#E3DCC8", background: "#FFFEFA" }}
+            style={{ borderColor: "#E6EAF2", background: "#FFFFFF" }}
           />
           <button
             type="button"
@@ -5627,7 +5955,7 @@ function QuizBuilder({
                 {isEditing ? "Шалгалт засах" : "Шалгалт үүсгэх"}
               </h3>
               {isEditing ? (
-                <p className="text-xs mt-1" style={{ color: "#6B6858" }}>
+                <p className="text-xs mt-1" style={{ color: "#64748B" }}>
                   Гарчиг, анги, хугацаа, асуулт, хариултыг засаад «Өөрчлөлт хадгалах» дарна уу. Нээлттэй/хаалттай төлөв хэвээр үлдэнэ.
                 </p>
               ) : null}
@@ -5642,10 +5970,10 @@ function QuizBuilder({
               <FileText size={18} color="#24478F" />
               <span className="text-sm font-semibold" style={{ color: "#24478F" }}>PDF / текстээс оруулах</span>
             </div>
-            <p className="text-xs mb-3" style={{ color: "#6B6858" }}>
+            <p className="text-xs mb-3" style={{ color: "#64748B" }}>
               Тогтмол форматтай .pdf эсвэл .txt файл. Асуулт бүрт «Оноо: 2» гэж бичиж болно. Загвар татаж аваад Word/PDF болгож болно.
             </p>
-            <pre className="text-xs mb-3 p-2 rounded overflow-x-auto" style={{ background: "#FFFEFA", color: "#6B6858", border: "1px solid #E3DCC8" }}>
+            <pre className="text-xs mb-3 p-2 rounded overflow-x-auto" style={{ background: "#FFFFFF", color: "#64748B", border: "1px solid #E6EAF2" }}>
 {`Гарчиг: Жишээ шалгалт
 Хичээл: Математик
 
@@ -5716,7 +6044,7 @@ function QuizBuilder({
               </p>
             ) : null}
             <div className="mb-4">
-              <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>
+              <label className="text-sm font-medium block mb-1" style={{ color: "#0F172A" }}>
                 Харагдах анги / түвшин
               </label>
               {classes.length > 0 ? (
@@ -5742,7 +6070,7 @@ function QuizBuilder({
                     ))}
                   </select>
                   {quizForm.classId ? (
-                    <label className="mt-2 flex items-start gap-2 text-xs" style={{ color: "#6B6858" }}>
+                    <label className="mt-2 flex items-start gap-2 text-xs" style={{ color: "#64748B" }}>
                       <input
                         type="checkbox"
                         className="mt-0.5"
@@ -5755,7 +6083,7 @@ function QuizBuilder({
                       </span>
                     </label>
                   ) : null}
-                  <p className="text-xs mt-1.5" style={{ color: "#6B6858" }}>
+                  <p className="text-xs mt-1.5" style={{ color: "#64748B" }}>
                     {quizForm.classId && quizForm.forGrade
                       ? `${quizForm.grade}-р ангийн бүх сурагчид харна.`
                       : quizForm.classId
@@ -5775,14 +6103,14 @@ function QuizBuilder({
                       <option key={g} value={g}>{g}-р анги</option>
                     ))}
                   </select>
-                  <p className="text-xs mt-1.5" style={{ color: "#6B6858" }}>
+                  <p className="text-xs mt-1.5" style={{ color: "#64748B" }}>
                     Анги бүртгээгүй тул түвшингээр харуулна. Эхлээд «Анги үүсгэх» хэсэгт анги нэмэхийг зөвлөе.
                   </p>
                 </>
               )}
             </div>
             <div className="mb-4">
-              <label className="text-sm font-medium block mb-1" style={{ color: "#2B2A25" }}>
+              <label className="text-sm font-medium block mb-1" style={{ color: "#0F172A" }}>
                 Шалгалтын хугацаа (минут)
               </label>
               <div className="flex items-center gap-2">
@@ -5795,7 +6123,7 @@ function QuizBuilder({
                   value={quizForm.durationMinutes}
                   onChange={(e) => setQuizForm((f) => ({ ...f, durationMinutes: Number(e.target.value) }))}
                 />
-                <span className="text-xs" style={{ color: "#6B6858" }}>Сурагчийн дэлгэцэн дээр цаг харагдана</span>
+                <span className="text-xs" style={{ color: "#64748B" }}>Сурагчийн дэлгэцэн дээр цаг харагдана</span>
               </div>
             </div>
 
@@ -5803,11 +6131,11 @@ function QuizBuilder({
               {quizForm.questions.map((q, qi) => {
                 const nq = normalizeQuestion(q);
                 return (
-                  <div key={qi} className="rounded-lg p-3" style={{ background: "#FFFEFA", border: "1px dashed #D8D0BA" }}>
+                  <div key={qi} className="rounded-lg p-3" style={{ background: "#FFFFFF", border: "1px dashed #D5DCE8" }}>
                     <div className="flex items-center justify-between mb-2 gap-2">
                       <span className="text-xs font-semibold" style={{ color: "#24478F" }}>Асуулт {qi + 1}</span>
                       <div className="flex items-center gap-2">
-                        <label className="flex items-center gap-1.5 text-xs shrink-0" style={{ color: "#6B6858" }}>
+                        <label className="flex items-center gap-1.5 text-xs shrink-0" style={{ color: "#64748B" }}>
                           Оноо
                           <input
                             type="number"
@@ -5841,16 +6169,16 @@ function QuizBuilder({
                     />
                     <div className="grid sm:grid-cols-2 gap-3 mt-2">
                       {nq.options.map((opt, oi) => (
-                        <div key={oi} className="rounded-md p-2" style={{ border: "1px solid #E3DCC8" }}>
+                        <div key={oi} className="rounded-md p-2" style={{ border: "1px solid #E6EAF2" }}>
                           <div className="flex items-center gap-2 mb-1">
                             <button
                               onClick={() => updateQuestion(qi, "correct", oi)}
                               title="Зөв хариулт болгох"
                               className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold"
                               style={{
-                                border: "1.5px solid " + (nq.correct === oi ? "#2F6F4E" : "#D8D0BA"),
-                                background: nq.correct === oi ? "#E4F0E9" : "#FFFEFA",
-                                color: nq.correct === oi ? "#2F6F4E" : "#6B6858",
+                                border: "1.5px solid " + (nq.correct === oi ? "#2F6F4E" : "#D5DCE8"),
+                                background: nq.correct === oi ? "#E4F0E9" : "#FFFFFF",
+                                color: nq.correct === oi ? "#2F6F4E" : "#64748B",
                               }}
                             >
                               {LETTERS[oi]}
@@ -5878,7 +6206,7 @@ function QuizBuilder({
             </div>
 
             <div className="mt-4">
-              <div className="text-xs mb-3" style={{ color: "#6B6858" }}>
+              <div className="text-xs mb-3" style={{ color: "#64748B" }}>
                 Нийт оноо: <span className="font-semibold" style={{ color: "#24478F" }}>{quizTotalPoints(quizForm.questions)}</span>
               </div>
               <div className="flex flex-wrap items-center gap-3">
@@ -5893,7 +6221,7 @@ function QuizBuilder({
                   {saving ? <Loader2 size={14} className="animate-spin" /> : null}
                   {isEditing ? "Өөрчлөлт хадгалах" : "Шалгалт хадгалах"}
                 </button>
-                <button type="button" onClick={closeForm} className="text-xs underline" style={{ color: "#6B6858" }}>
+                <button type="button" onClick={closeForm} className="text-xs underline" style={{ color: "#64748B" }}>
                   Болих
                 </button>
               </div>
@@ -5906,7 +6234,7 @@ function QuizBuilder({
                     ))}
                     {quizFormMissingHints.length > 8 ? <li>… болон бусад</li> : null}
                   </ul>
-                  <p className="mt-2" style={{ color: "#6B6858" }}>
+                  <p className="mt-2" style={{ color: "#64748B" }}>
                     Асуулт бүрт А, Б, В, Г <strong>дөрвөн сонголт</strong> бүгд текст эсвэл зурагтай байх ёстой. Асуулт бүрт оноо өгнө.
                   </p>
                 </div>
@@ -5916,7 +6244,7 @@ function QuizBuilder({
         </div>
       )}
 
-      <h3 className="text-sm font-semibold mb-3" style={{ color: "#6B6858" }}>Шалгалтын жагсаалт ({quizzes.length})</h3>
+      <h3 className="text-sm font-semibold mb-3" style={{ color: "#64748B" }}>Шалгалтын жагсаалт ({quizzes.length})</h3>
       {quizzes.length === 0 ? (
         <EmptyState text="Одоогоор шалгалт үүсгээгүй байна." />
       ) : (
@@ -5926,7 +6254,7 @@ function QuizBuilder({
               <div className="min-w-0">
                 <span className="cn-tag mr-2">{q.subject}</span>
                 <span className="text-sm font-medium">{q.title}</span>
-                <div className="text-xs mt-1.5 flex flex-wrap gap-x-3 gap-y-1" style={{ color: "#6B6858" }}>
+                <div className="text-xs mt-1.5 flex flex-wrap gap-x-3 gap-y-1" style={{ color: "#64748B" }}>
                   <span>{quizAudienceLabel(q, classes)}</span>
                   <span>{q.questions.length} асуулт</span>
                   <span>{quizTotalPoints(q.questions)} оноо</span>
@@ -5967,7 +6295,7 @@ function QuizBuilder({
 function AttemptBreakdown({ details }) {
   if (!details?.length) {
     return (
-      <p className="text-xs px-3 py-2" style={{ color: "#6B6858" }}>
+      <p className="text-xs px-3 py-2" style={{ color: "#64748B" }}>
         Энэ оролдлогод асуулт бүрийн онооны задаргаа байхгүй. Шинээр өгсөн шалгалтад харагдана. Хэрэв шинэ шалгалт ч задаргаагүй бол Supabase SQL Editor-т supabase-attempt-details.sql-ийг Run хийнэ үү.
       </p>
     );
@@ -5979,7 +6307,7 @@ function AttemptBreakdown({ details }) {
         const bg = d.unanswered ? "#FFF6E8" : d.isCorrect ? "#E4F0E9" : "#FBE7E4";
         const num = typeof d.originalIndex === "number" && d.originalIndex < 1000 ? d.originalIndex + 1 : i + 1;
         return (
-          <div key={`${d.originalIndex ?? i}-${i}`} className="rounded-md p-3" style={{ background: "#FFFEFA", border: "1px solid #E3DCC8" }}>
+          <div key={`${d.originalIndex ?? i}-${i}`} className="rounded-md p-3" style={{ background: "#FFFFFF", border: "1px solid #E6EAF2" }}>
             <div className="flex flex-wrap items-start justify-between gap-2 mb-1">
               <div className="text-sm font-medium min-w-0">
                 {num}. {d.text || (d.imageUrl ? "Зургийг харна уу" : "Асуулт")}
@@ -5997,11 +6325,11 @@ function AttemptBreakdown({ details }) {
                 <ZoomableImage
                   src={d.imageUrl}
                   className="max-h-28 rounded object-contain border"
-                  style={{ borderColor: "#E3DCC8", background: "#FFFEFA" }}
+                  style={{ borderColor: "#E6EAF2", background: "#FFFFFF" }}
                 />
               </div>
             ) : null}
-            <div className="text-xs space-y-2" style={{ color: "#6B6858" }}>
+            <div className="text-xs space-y-2" style={{ color: "#64748B" }}>
               <div>
                 Сонгосон:{" "}
                 {d.unanswered ? (
@@ -6017,7 +6345,7 @@ function AttemptBreakdown({ details }) {
                     <ZoomableImage
                       src={d.chosenImageUrl}
                       className="max-h-24 rounded object-contain border"
-                      style={{ borderColor: "#E3DCC8", background: "#FFFEFA" }}
+                      style={{ borderColor: "#E6EAF2", background: "#FFFFFF" }}
                     />
                   </div>
                 ) : null}
@@ -6033,7 +6361,7 @@ function AttemptBreakdown({ details }) {
                     <ZoomableImage
                       src={d.correctImageUrl}
                       className="max-h-24 rounded object-contain border"
-                      style={{ borderColor: "#E3DCC8", background: "#FFFEFA" }}
+                      style={{ borderColor: "#E6EAF2", background: "#FFFFFF" }}
                     />
                   </div>
                 ) : null}
@@ -6076,8 +6404,8 @@ function QuizAnalysisView({ group, openKey, setOpenKey, students = [], retakeGra
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <span className="cn-tag mr-2">{group.subject}</span>
-            <span className="text-base font-semibold" style={{ color: "#2B2A25" }}>{group.quizTitle}</span>
-            <p className="text-xs mt-1.5" style={{ color: "#6B6858" }}>
+            <span className="text-base font-semibold" style={{ color: "#0F172A" }}>{group.quizTitle}</span>
+            <p className="text-xs mt-1.5" style={{ color: "#64748B" }}>
               {n} сурагч · {cols.length} даалгавар · мөр дээр дарж хариуг харна
             </p>
           </div>
@@ -6146,7 +6474,7 @@ function QuizAnalysisView({ group, openKey, setOpenKey, students = [], retakeGra
                     onClick={() => setOpenKey(open ? null : key)}
                     style={{ cursor: "pointer" }}
                   >
-                    <td className="text-center cn-sticky-num" style={{ color: "#6B6858" }}>{i + 1}</td>
+                    <td className="text-center cn-sticky-num" style={{ color: "#64748B" }}>{i + 1}</td>
                     <td className="font-medium cn-sticky-name">{a.studentName}</td>
                     <td className="text-center">
                       <span
@@ -6162,11 +6490,11 @@ function QuizAnalysisView({ group, openKey, setOpenKey, students = [], retakeGra
                       const cls = v == null ? "" : full ? "cn-score cn-score-ok" : zero ? "cn-score cn-score-bad" : "cn-score cn-score-mid";
                       return (
                         <td key={ci} className="text-center">
-                          {v == null ? <span style={{ color: "#D8D0BA" }}>—</span> : <span className={cls}>{v}</span>}
+                          {v == null ? <span style={{ color: "#D5DCE8" }}>—</span> : <span className={cls}>{v}</span>}
                         </td>
                       );
                     })}
-                    <td className="text-center cn-sep" style={{ color: "#6B6858" }}>{max}</td>
+                    <td className="text-center cn-sep" style={{ color: "#64748B" }}>{max}</td>
                     <td className="text-center font-semibold">{got}</td>
                     <td className="text-center">
                       <span className={pct >= 60 ? "cn-score cn-score-ok" : "cn-score cn-score-bad"}>
@@ -6196,7 +6524,7 @@ function QuizAnalysisView({ group, openKey, setOpenKey, students = [], retakeGra
                           {grantBusy === student.id ? "..." : "Дахин өгүүлэх"}
                         </button>
                       ) : (
-                        <span style={{ color: "#D8D0BA" }}>—</span>
+                        <span style={{ color: "#D5DCE8" }}>—</span>
                       )}
                     </td>
                   </tr>
@@ -6350,7 +6678,7 @@ function ResultsTable({ setTab, attempts, quizzes = [], students = [], classes =
                 >
                   <span className="cn-tag">{g.subject}</span>
                   <div className="font-semibold mt-2">{g.quizTitle}</div>
-                  <div className="text-xs mt-1" style={{ color: "#6B6858" }}>{g.rows.length} сурагч өгсөн</div>
+                  <div className="text-xs mt-1" style={{ color: "#64748B" }}>{g.rows.length} сурагч өгсөн</div>
                 </button>
               ))}
             </div>
@@ -6388,7 +6716,7 @@ function ResultsTable({ setTab, attempts, quizzes = [], students = [], classes =
     return (
       <div>
         <BackRow onBack={() => setTab("home")} title="Сурагчдын үр дүн" />
-        <p className="text-xs mb-4" style={{ color: "#6B6858" }}>
+        <p className="text-xs mb-4" style={{ color: "#64748B" }}>
           Ангиа сонгоод тухайн ангийн авсан шалгалтуудыг харна.
         </p>
         {classes.length === 0 ? (
@@ -6415,7 +6743,7 @@ function ResultsTable({ setTab, attempts, quizzes = [], students = [], classes =
                   className="cn-card rounded-lg p-4 w-full text-left transition-transform hover:-translate-y-0.5"
                 >
                   <div className="text-sm font-medium" style={{ color: "#24478F" }}>{c.name} анги</div>
-                  <div className="text-xs mt-1.5 flex flex-wrap gap-x-3" style={{ color: "#6B6858" }}>
+                  <div className="text-xs mt-1.5 flex flex-wrap gap-x-3" style={{ color: "#64748B" }}>
                     <span>{studentCount} сурагч</span>
                     <span>{shown} шалгалт</span>
                     <span>{classAtt.length} оролдлого</span>
@@ -6456,13 +6784,13 @@ function ResultsTable({ setTab, attempts, quizzes = [], students = [], classes =
               >
                 <span className="cn-tag">{quiz.subject}</span>
                 <div className="font-semibold mt-2">{quiz.title}</div>
-                <div className="text-xs mt-1.5 flex flex-wrap gap-x-3" style={{ color: "#6B6858" }}>
+                <div className="text-xs mt-1.5 flex flex-wrap gap-x-3" style={{ color: "#64748B" }}>
                   <span>{quiz.questions?.length ? `${quiz.questions.length} асуулт` : null}</span>
                   <span>{uniqueStudents} сурагч өгсөн</span>
                   {attemptCount > uniqueStudents ? <span>{attemptCount} оролдлого</span> : null}
                 </div>
                 {latest ? (
-                  <div className="text-xs mt-1" style={{ color: "#6B6858" }}>{fmtDate(latest)}</div>
+                  <div className="text-xs mt-1" style={{ color: "#64748B" }}>{fmtDate(latest)}</div>
                 ) : (
                   <div className="text-xs mt-1" style={{ color: "#8A5A00" }}>Одоогоор өгөөгүй</div>
                 )}
@@ -6521,7 +6849,7 @@ function StudentLessonTree({ groups, grade, selectedId, onOpen }) {
             style={{ background: active ? "#EAEFF8" : "transparent" }}
           >
             {isTypingFolderName(folder.name) ? <Keyboard size={14} color="#1F6B4A" /> : <Folder size={14} color="#24478F" />}
-            <span className="text-sm truncate" style={{ color: "#2B2A25" }}>{folder.name}</span>
+            <span className="text-sm truncate" style={{ color: "#0F172A" }}>{folder.name}</span>
           </button>
           {renderBranch(folder.id, depth + 1)}
         </div>
@@ -6530,12 +6858,12 @@ function StudentLessonTree({ groups, grade, selectedId, onOpen }) {
   }
   const tree = renderBranch(null, 0);
   if (!tree) {
-    return <p className="text-sm" style={{ color: "#6B6858" }}>Жагсаалт алга. Багш анги дээрээ хичээл нэмсний дараа энд гарна.</p>;
+    return <p className="text-sm" style={{ color: "#64748B" }}>Жагсаалт алга. Багш анги дээрээ хичээл нэмсний дараа энд гарна.</p>;
   }
   return <div className="space-y-0.5">{tree}</div>;
 }
 
-function StudentFolderLessons({ studentId, grade, groups = [], materials = [], course, onOpenMaterial, onBack, folderId, setFolderId }) {
+function StudentFolderLessons({ studentId, grade, groups = [], materials = [], course, onOpenMaterial, folderId, setFolderId }) {
   const hasGrade = Number.isFinite(grade) && grade > 0;
   const gradeGroups = groups.filter((item) => !item.subjectId && (!hasGrade || item.grade === grade));
   const selected = gradeGroups.find((item) => item.id === folderId) || null;
@@ -6546,17 +6874,9 @@ function StudentFolderLessons({ studentId, grade, groups = [], materials = [], c
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={onBack}
-        className="cn-btn-secondary rounded-md px-3 py-1.5 text-sm font-medium inline-flex items-center gap-1.5 mb-4"
-      >
-        <ArrowLeft size={14} /> Самбар
-      </button>
-      <h2 className="cn-hand text-4xl mb-4" style={{ color: "#24478F" }}>Хичээлүүд</h2>
       <div className="grid lg:grid-cols-[280px_minmax(0,1fr)] gap-3 items-start">
-        <aside className="cn-card rounded-2xl p-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] overflow-y-auto">
-          <h3 className="font-semibold mb-3" style={{ color: "#2B2A25" }}>
+        <aside className="cn-card rounded-2xl p-4 lg:sticky lg:top-24 lg:max-h-[calc(100vh-7rem)] overflow-y-auto">
+          <h3 className="font-semibold mb-3" style={{ color: "#0F172A" }}>
             Хичээлийн жагсаалт{hasGrade ? ` · ${grade}-р анги` : ""}
           </h3>
           <StudentLessonTree groups={groups} grade={grade} selectedId={folderId} onOpen={setFolderId} />
@@ -6586,13 +6906,130 @@ function StudentFolderLessons({ studentId, grade, groups = [], materials = [], c
                 ))}
               </div>
             ) : (
-              <p className="text-sm" style={{ color: "#6B6858" }}>Энэ хавтаст материал алга.</p>
+              <p className="text-sm" style={{ color: "#64748B" }}>Энэ хавтаст материал алга.</p>
             )
           ) : (
-            <p className="text-sm" style={{ color: "#6B6858" }}>Зүүн жагсаалтаас хичээл сонгоно.</p>
+            <p className="text-sm" style={{ color: "#64748B" }}>Зүүн жагсаалтаас хичээл сонгоно.</p>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function StudentHome({ materialCount, quizzes, attempts, onOpenLessons, onOpenQuizzes, onOpenScores }) {
+  const openQuizzes = (quizzes || []).filter((quiz) => quiz.isOpen).length;
+  const recent = (attempts || []).slice(0, 5);
+  const stats = [
+    { label: "Материал", value: materialCount },
+    { label: "Шалгалт", value: (quizzes || []).length },
+    { label: "Нээлттэй шалгалт", value: openQuizzes },
+    { label: "Оролдлого", value: (attempts || []).length },
+  ];
+  const actions = [
+    {
+      key: "lessons",
+      icon: PencilLine,
+      label: "Хичээл",
+      hint: "Хичээл, материалаа нээнэ",
+      stat: `${materialCount} материал`,
+      tone: "#1F6B4A",
+      wash: "#E4F0E9",
+      onClick: onOpenLessons,
+    },
+    {
+      key: "quizzes",
+      icon: ClipboardList,
+      label: "Шалгалт",
+      hint: "Нээлттэй шалгалтаа өгнө",
+      stat: `${(quizzes || []).length} шалгалт · ${openQuizzes} нээлттэй`,
+      tone: "#8A5A00",
+      wash: "#F8F0DC",
+      onClick: onOpenQuizzes,
+    },
+    {
+      key: "scores",
+      icon: Trophy,
+      label: "Үр дүн",
+      hint: "Өөрийн оноогоо харна",
+      stat: `${(attempts || []).length} оролдлого`,
+      tone: "#7A3E6D",
+      wash: "#F4E8F1",
+      onClick: onOpenScores,
+    },
+  ];
+  return (
+    <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
+      <div className="min-w-0">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {stats.map((item) => (
+            <div key={item.label} className="cn-card rounded-2xl px-4 py-4">
+              <div className="text-2xl font-semibold tabular-nums leading-none" style={{ color: "#0F172A" }}>{item.value}</div>
+              <div className="text-xs mt-2" style={{ color: "#64748B" }}>{item.label}</div>
+            </div>
+          ))}
+        </div>
+        <div className="grid sm:grid-cols-2 gap-3 mt-4">
+          {actions.map((action) => {
+            const Icon = action.icon;
+            return (
+              <button
+                key={action.key}
+                type="button"
+                onClick={action.onClick}
+                className="cn-card group rounded-2xl p-5 text-left flex flex-col min-h-[148px] transition-transform hover:-translate-y-0.5"
+              >
+                <span className="flex items-center justify-between">
+                  <span className="w-11 h-11 rounded-xl flex items-center justify-center" style={{ background: action.wash, color: action.tone }}>
+                    <Icon size={20} />
+                  </span>
+                  <ChevronRight size={18} className="transition-transform group-hover:translate-x-0.5" color="#94A3B8" />
+                </span>
+                <span className="font-semibold text-lg mt-4 block" style={{ color: "#0F172A" }}>{action.label}</span>
+                <span className="text-sm block mt-1" style={{ color: "#64748B" }}>{action.hint}</span>
+                <span className="text-xs font-medium block mt-auto pt-4" style={{ color: action.tone }}>{action.stat}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <aside className="cn-card rounded-2xl p-5 xl:sticky xl:top-24">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <h3 className="font-semibold text-sm" style={{ color: "#0F172A" }}>Сүүлийн оролдлогууд</h3>
+          {attempts.length > 0 ? (
+            <button type="button" onClick={onOpenScores} className="text-xs font-medium" style={{ color: "#24478F" }}>
+              Бүгдийг харах
+            </button>
+          ) : null}
+        </div>
+        {recent.length === 0 ? (
+          <p className="text-sm py-6 leading-relaxed" style={{ color: "#64748B" }}>
+            Одоогоор шалгалтын оролдлого алга. Багш шалгалт нээсний дараа энд гарна.
+          </p>
+        ) : (
+          <ul>
+            {recent.map((attempt) => {
+              const pct = attempt.total ? Math.round((attempt.score / attempt.total) * 100) : 0;
+              const tone = pct >= 80 ? "#2F6F4E" : pct >= 50 ? "#24478F" : "#9A3324";
+              const wash = pct >= 80 ? "#E4F0E9" : pct >= 50 ? "#EAEFF8" : "#FBE7E4";
+              return (
+                <li key={attempt.id} className="flex items-center justify-between gap-3 py-2.5 border-b last:border-b-0" style={{ borderColor: "#E6EAF2" }}>
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium truncate">{attempt.quizTitle}</div>
+                    <div className="text-xs truncate" style={{ color: "#64748B" }}>
+                      {attempt.subject || "Шалгалт"}
+                      {attempt.date ? ` · ${fmtDate(attempt.date)}` : ""}
+                    </div>
+                  </div>
+                  <span className="shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full tabular-nums" style={{ background: wash, color: tone }}>
+                    {attempt.score}/{attempt.total}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </aside>
     </div>
   );
 }
@@ -6611,14 +7048,14 @@ function StudentView(props) {
 
   if (tab === "home") {
     return (
-      <div>
-        <h2 className="cn-hand text-4xl mb-5" style={{ color: "#24478F" }}>Сурагчийн самбар</h2>
-        <div className="grid sm:grid-cols-3 gap-4">
-          <NavCard icon={<BookOpen size={22} color="#24478F" />} label="Хичээлүүд" sub="Хичээлийн жагсаалт" onClick={() => { setFolderId(null); setTab("lessons"); }} />
-          <NavCard icon={<ClipboardList size={22} color="#24478F" />} label="Шалгалтууд" sub={`${visibleQuizzes.length} шалгалт`} onClick={() => setTab("quizzes")} />
-          <NavCard icon={<Trophy size={22} color="#24478F" />} label="Миний онооны түүх" sub={`${myAttempts.length} оролдлого`} onClick={() => setTab("scores")} />
-        </div>
-      </div>
+      <StudentHome
+        materialCount={studentMaterials.length}
+        quizzes={visibleQuizzes}
+        attempts={myAttempts}
+        onOpenLessons={() => { setFolderId(null); setTab("lessons"); }}
+        onOpenQuizzes={() => setTab("quizzes")}
+        onOpenScores={() => setTab("scores")}
+      />
     );
   }
 
@@ -6631,7 +7068,6 @@ function StudentView(props) {
         materials={studentMaterials}
         course={typingCourse}
         onOpenMaterial={(item) => { setActiveLesson(item); setTab("lesson"); }}
-        onBack={() => setTab("home")}
         folderId={folderId}
         setFolderId={setFolderId}
       />
@@ -6661,10 +7097,9 @@ function LessonDetail({ setTab, activeLesson }) {
   );
 }
 
-function QuizList({ setTab, quizzes, startStudentQuiz, studentSession, myAttempts = [], retakeGrants = [] }) {
+function QuizList({ quizzes, startStudentQuiz, studentSession, myAttempts = [], retakeGrants = [] }) {
   return (
     <div>
-      <BackRow onBack={() => setTab("home")} title="Шалгалтууд" />
       {quizzes.length === 0 ? (
         <EmptyState text={studentSession?.className ? `${studentSession.className} ангид одоогоор шалгалт алга.` : "Одоогоор шалгалт нэмэгдээгүй байна."} />
       ) : (
@@ -6700,7 +7135,7 @@ function QuizList({ setTab, quizzes, startStudentQuiz, studentSession, myAttempt
                   </span>
                 </div>
                 <div className="font-semibold mt-2">{q.title}</div>
-                <div className="text-xs mt-1 flex flex-wrap gap-x-3" style={{ color: "#6B6858" }}>
+                <div className="text-xs mt-1 flex flex-wrap gap-x-3" style={{ color: "#64748B" }}>
                   <span>{q.questions.length} асуулт</span>
                   <span>{quizTotalPoints(q.questions)} оноо</span>
                   <span className="inline-flex items-center gap-1"><Clock size={12} /> {q.durationMinutes || 30} мин</span>
@@ -6829,7 +7264,7 @@ function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz,
           onClose={() => setLeaveWarn(false)}
         />
       ) : null}
-      <p className="text-xs mb-4" style={{ color: "#6B6858" }}>
+      <p className="text-xs mb-4" style={{ color: "#64748B" }}>
         Нийт хугацаа: {durationMinutes} минут. Нийт {quizTotalPoints(questions)} оноо. Цаг дуусмагц автоматаар илгээнэ.
         Илгээх товч бүх асуултад хариулж, сүүлийн 5 минут үлдсэн үед идэвхжинэ.
         Асуулт болон хариултын дараалал сурагч бүрт өөр байна. Зураг дээр дарж томруулж харна.
@@ -6853,7 +7288,7 @@ function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz,
                 <ZoomableImage
                   src={q.imageUrl}
                   className="max-h-56 rounded-md object-contain border"
-                  style={{ borderColor: "#E3DCC8", background: "#FFFEFA" }}
+                  style={{ borderColor: "#E6EAF2", background: "#FFFFFF" }}
                 />
               </div>
             ) : null}
@@ -6875,8 +7310,8 @@ function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz,
                   <span
                     className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold mt-0.5"
                     style={{
-                      border: "1.5px solid " + (quizAnswers[qi] === oi ? "#24478F" : "#D8D0BA"),
-                      color: quizAnswers[qi] === oi ? "#24478F" : "#6B6858",
+                      border: "1.5px solid " + (quizAnswers[qi] === oi ? "#24478F" : "#D5DCE8"),
+                      color: quizAnswers[qi] === oi ? "#24478F" : "#64748B",
                     }}
                   >
                     {LETTERS[oi]}
@@ -6888,11 +7323,11 @@ function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz,
                         <ZoomableImage
                           src={opt.imageUrl}
                           className="max-h-28 rounded object-contain border"
-                          style={{ borderColor: "#E3DCC8", background: "#FFFEFA" }}
+                          style={{ borderColor: "#E6EAF2", background: "#FFFFFF" }}
                         />
                       </span>
                     ) : null}
-                    {!opt.text && !opt.imageUrl ? <span style={{ color: "#6B6858" }}>—</span> : null}
+                    {!opt.text && !opt.imageUrl ? <span style={{ color: "#64748B" }}>—</span> : null}
                   </span>
                 </div>
               ))}
@@ -6911,7 +7346,7 @@ function QuizTake({ setTab, activeQuiz, quizAnswers, setQuizAnswers, submitQuiz,
           <span className="tabular-nums font-semibold">{formatCountdown(secondsLeft)}</span>
         </button>
         {!canSubmit ? (
-          <p className="text-xs mt-2" style={{ color: "#6B6858" }}>
+          <p className="text-xs mt-2" style={{ color: "#64748B" }}>
             {!allAnswered ? `Бүрэн хариулаагүй асуулт: ${unansweredCount}. ` : ""}
             {!inLastFiveMinutes ? "Илгээх товч сүүлийн 5 минут үлдсэн үед идэвхжинэ." : "Бүх асуултад хариулсны дараа илгээнэ."}
           </p>
@@ -6932,7 +7367,7 @@ function QuizResultView({ setTab, quizResult, activeQuiz }) {
         <span className="cn-hand text-4xl">{pct}%</span>
         <span className="text-xs font-semibold mt-1">{quizResult.score}/{quizResult.total} оноо</span>
       </div>
-      <p className="mt-6 text-sm text-center" style={{ color: "#6B6858" }}>
+      <p className="mt-6 text-sm text-center" style={{ color: "#64748B" }}>
         {quizResult.closed
           ? "Багш шалгалтыг хаасан тул хариулт автоматаар илгээгдлээ. "
           : quizResult.timedOut
@@ -6947,10 +7382,9 @@ function QuizResultView({ setTab, quizResult, activeQuiz }) {
   );
 }
 
-function MyScores({ setTab, myAttempts }) {
+function MyScores({ myAttempts }) {
   return (
     <div>
-      <BackRow onBack={() => setTab("home")} title="Миний онооны түүх" />
       {myAttempts.length === 0 ? (
         <EmptyState text="Та одоогоор шалгалт өгөөгүй байна." />
       ) : (
@@ -6966,7 +7400,7 @@ function MyScores({ setTab, myAttempts }) {
                 </div>
                 <div className="text-right">
                   <div className="text-sm font-semibold" style={{ color: pct >= 60 ? "#2F6F4E" : "#9A3324" }}>{a.score}/{a.total} ({pct}%)</div>
-                  <div className="text-xs" style={{ color: "#6B6858" }}>{fmtDate(a.date)}</div>
+                  <div className="text-xs" style={{ color: "#64748B" }}>{fmtDate(a.date)}</div>
                 </div>
               </div>
             );
@@ -6979,7 +7413,7 @@ function MyScores({ setTab, myAttempts }) {
 
 function EmptyState({ text }) {
   return (
-    <div className="cn-card rounded-xl p-8 text-center text-sm" style={{ color: "#6B6858", borderStyle: "dashed" }}>
+    <div className="cn-card rounded-xl p-8 text-center text-sm" style={{ color: "#64748B", borderStyle: "dashed" }}>
       {text}
     </div>
   );
