@@ -75,6 +75,33 @@ function promptOf(live, prompts, lessonIndex) {
   return item?.prompt || "";
 }
 
+function projectDrill(lane, live, prompts, floor = 0) {
+  const list = lessonList(live, prompts);
+  let lesson = lessonIndexOf(lane, live);
+  if (!Number.isFinite(lesson) || lesson < 0) lesson = 0;
+  if (list.length && lesson >= list.length) lesson = 0;
+  let index = Math.max(0, Number(lane?.index) || 0);
+  const current = list[lesson]?.prompt || lane?.prompt || "";
+  if (!lane?.result && current && index >= current.length && list.length > 1) {
+    lesson = lesson + 1 >= list.length ? 0 : lesson + 1;
+    index = 0;
+  }
+  const held = Math.max(0, Number(floor) || 0);
+  if (!lane?.result && held > lesson && list.length) {
+    lesson = held >= list.length ? 0 : held;
+    const heldPrompt = list[lesson]?.prompt || "";
+    if (heldPrompt && index >= heldPrompt.length) index = 0;
+  }
+  const prompt = list[lesson]?.prompt || lane?.prompt || current;
+  return {
+    lesson,
+    index,
+    prompt,
+    task: taskLabel(live, prompts, lesson),
+    floor: lane?.result ? held : Math.max(held, lesson),
+  };
+}
+
 function taskLabel(live, prompts, lessonIndex) {
   const list = lessonList(live, prompts);
   const index = lessonIndex == null ? (Number(live?.lesson) || 0) : (Number(lessonIndex) || 0);
@@ -298,6 +325,7 @@ function lanesFromLive(live) {
       errors: Number(row.errors) || 0,
       bank: Number(row.bank) || 0,
       lesson: row.lesson == null || row.lesson === "" ? null : (Number(row.lesson) || 0),
+      prompt: typeof row.prompt === "string" ? row.prompt : "",
       startedAt: row.startedAt == null || row.startedAt === "" ? null : Number(row.startedAt),
       result,
     };
@@ -371,6 +399,7 @@ export default function TulaanPage({ students = [], classes = [], typingCourse =
   const livePublishRef = useRef(null);
   const liveErrorRef = useRef(false);
   const roundRef = useRef(0);
+  const drillFloorRef = useRef([0, 0]);
   turnRef.current = turn;
   battleIdRef.current = battleId;
 
@@ -413,18 +442,22 @@ export default function TulaanPage({ students = [], classes = [], typingCourse =
   promptRef.current = duelPrompt;
 
   const pairReady = Boolean(leftId && rightId && leftId !== rightId && prompt);
+  const serverRound = Number(battle?.live?.countdownStartedAt) || 0;
+  const shownLanes = serverRound > 0 && serverRound >= roundRef.current ? lanesFromLive(battle.live) : lanes;
   const fighters = (lockedFighters || []).map((fighter, slot) => {
-    const lesson = lessonIndexOf(lanes[slot], battle?.live);
+    const lane = shownLanes[slot] || blankRacer();
+    const view = projectDrill(lane, battle?.live, prompts, drillFloorRef.current[slot] || 0);
+    drillFloorRef.current[slot] = view.floor;
     return {
       ...fighter,
-      index: lanes[slot]?.index || 0,
-      errors: lanes[slot]?.errors || 0,
-      bank: lanes[slot]?.bank || 0,
-      lesson,
-      prompt: promptOf(battle?.live, prompts, lesson) || duelPrompt,
-      task: taskLabel(battle?.live, prompts, lesson),
-      startedAt: lanes[slot]?.startedAt || null,
-      result: lanes[slot]?.result || results[slot] || null,
+      index: view.index,
+      errors: lane.errors || 0,
+      bank: lane.bank || 0,
+      lesson: view.lesson,
+      prompt: view.prompt || duelPrompt,
+      task: view.task,
+      startedAt: lane.startedAt || null,
+      result: lane.result || results[slot] || null,
     };
   });
 
@@ -635,6 +668,7 @@ export default function TulaanPage({ students = [], classes = [], typingCourse =
     setResults(emptyBoard());
     const started = Date.now();
     roundRef.current = started;
+    drillFloorRef.current = [0, 0];
     setLanes([blankRacer(), blankRacer()]);
     setCountdownStartedAt(started);
     setPhase("countdown");
@@ -673,6 +707,7 @@ export default function TulaanPage({ students = [], classes = [], typingCourse =
     setResults(emptyBoard());
     const started = Date.now();
     roundRef.current = started;
+    drillFloorRef.current = [0, 0];
     setLanes([blankRacer(), blankRacer()]);
     setCountdownStartedAt(started);
     setPhase("countdown");
@@ -870,7 +905,7 @@ function BattleStage({
       {phase === "type" && mineSlot == null ? (
         <div className="grid md:grid-cols-2 gap-3 mt-6">
           {fighters.map((fighter, slot) => (
-            <LaneWatch key={slot} fighter={fighter} prompt={fighter.prompt || prompt} />
+            <LaneWatch key={`${slot}-${fighter.lesson}-${fighter.prompt}`} fighter={fighter} prompt={fighter.prompt || prompt} />
           ))}
         </div>
       ) : null}
@@ -1307,9 +1342,15 @@ function StudentMirror({ battle, studentId }) {
   const serverMine = mySlot >= 0 ? lanes[mySlot] : blankRacer();
   const serverFoe = mySlot >= 0 ? (lanes[1 - mySlot] || blankRacer()) : blankRacer();
   const myLesson = lessonIndexOf(serverMine, live);
-  const foeLesson = lessonIndexOf(serverFoe, live);
   const drillList = lessonList(live, null);
   const myPrompt = promptOf(live, null, myLesson) || battle.prompt || "";
+  const foeFloor = useRef(0);
+  const foeRound = useRef(0);
+  const roundId = Number(live.countdownStartedAt) || 0;
+  if (foeRound.current !== roundId) {
+    foeRound.current = roundId;
+    foeFloor.current = 0;
+  }
   const race = useStudentRace({
     active: phase === "type" && mySlot >= 0 && !serverMine.result,
     battleId: battle.id,
@@ -1337,17 +1378,19 @@ function StudentMirror({ battle, studentId }) {
     if (!row || !hero) return null;
     const lane = lanes[slot] || blankRacer();
     const mine = slot === mySlot;
-    const lesson = mine && phase === "type" ? race.lesson : (slot === 1 - mySlot ? foeLesson : lessonIndexOf(lane, live));
     const drillLessons = race.lessons?.length ? race.lessons : live.lessons;
+    const foeView = mine ? null : projectDrill(lane, live, drillLessons, slot === 1 - mySlot ? foeFloor.current : 0);
+    if (foeView && slot === 1 - mySlot) foeFloor.current = foeView.floor;
+    const lesson = mine && phase === "type" ? race.lesson : (foeView ? foeView.lesson : lessonIndexOf(lane, live));
     return {
       name: row.studentName,
       hero,
-      index: mine && phase === "type" ? race.index : lane.index,
+      index: mine && phase === "type" ? race.index : (foeView ? foeView.index : lane.index),
       errors: mine && phase === "type" ? race.errors : lane.errors,
       bank: lane.bank || 0,
       lesson,
-      prompt: (mine && phase === "type" ? race.prompt : promptOf(live, drillLessons, lesson)) || battle.prompt || "",
-      task: taskLabel(live, drillLessons, lesson),
+      prompt: (mine && phase === "type" ? race.prompt : (foeView?.prompt || promptOf(live, drillLessons, lesson))) || battle.prompt || "",
+      task: mine && phase === "type" ? taskLabel(live, drillLessons, lesson) : (foeView?.task || taskLabel(live, drillLessons, lesson)),
       startedAt: mine && phase === "type" ? (race.startedAt || lane.startedAt) : lane.startedAt,
       result: phase === "countdown" ? null : (lane.result || (mine ? race.result : null)),
     };

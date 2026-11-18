@@ -271,7 +271,8 @@ begin
   end if;
   update battles
      set prompt = case
-           when coalesce(p_live, '{}'::jsonb) ? 'lessons'
+           when coalesce(p_live, '{}'::jsonb) ? 'lesson'
+            and coalesce(p_live, '{}'::jsonb) ? 'lessons'
             and jsonb_typeof(p_live->'lessons') = 'array'
             and jsonb_array_length(p_live->'lessons') > 0
              then coalesce(
@@ -284,7 +285,8 @@ begin
            else prompt
          end,
          prompt_id = case
-           when coalesce(p_live, '{}'::jsonb) ? 'lessons'
+           when coalesce(p_live, '{}'::jsonb) ? 'lesson'
+            and coalesce(p_live, '{}'::jsonb) ? 'lessons'
             and jsonb_typeof(p_live->'lessons') = 'array'
             and jsonb_array_length(p_live->'lessons') > 0
              then coalesce(
@@ -459,6 +461,7 @@ begin
     'errors', misses,
     'bank', coalesce(nullif(racers->slot->>'bank', '')::int, 0),
     'lesson', racer_lesson,
+    'prompt', current_prompt,
     'startedAt', to_jsonb(started),
     'result', result
   );
@@ -567,21 +570,26 @@ begin
              jsonb_set(
                jsonb_set(
                  jsonb_set(
-                   live,
-                   array['racers', slot::text, 'bank'],
-                   to_jsonb(coalesce((live#>>array['racers', slot::text, 'bank'])::int, 0) + typed),
+                   jsonb_set(
+                     live,
+                     array['racers', slot::text, 'bank'],
+                     to_jsonb(coalesce((live#>>array['racers', slot::text, 'bank'])::int, 0) + typed),
+                     true
+                   ),
+                   array['racers', slot::text, 'index'],
+                   '0'::jsonb,
                    true
                  ),
-                 array['racers', slot::text, 'index'],
-                 '0'::jsonb,
+                 array['racers', slot::text, 'result'],
+                 'null'::jsonb,
                  true
                ),
-               array['racers', slot::text, 'result'],
-               'null'::jsonb,
+               array['racers', slot::text, 'lesson'],
+               to_jsonb(next_i),
                true
              ),
-             array['racers', slot::text, 'lesson'],
-             to_jsonb(next_i),
+             array['racers', slot::text, 'prompt'],
+             to_jsonb(next_prompt),
              true
            ),
            array['racers', slot::text, 'startedAt'],
