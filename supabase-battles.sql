@@ -665,6 +665,240 @@ begin
 end;
 $$;
 
+create table if not exists battle_results (
+  id uuid primary key default gen_random_uuid(),
+  battle_id uuid not null references battles(id) on delete cascade,
+  class_id uuid,
+  teacher_id uuid,
+  finished_at timestamptz not null default now(),
+  left_student_id uuid,
+  left_name text not null default '',
+  left_hero text not null default '',
+  right_student_id uuid,
+  right_name text not null default '',
+  right_hero text not null default '',
+  winner_side text not null,
+  left_errors int not null default 0,
+  right_errors int not null default 0,
+  left_ko boolean not null default false,
+  right_ko boolean not null default false
+);
+
+alter table battle_results drop constraint if exists battle_results_winner_side_check;
+alter table battle_results
+  add constraint battle_results_winner_side_check
+  check (winner_side in ('left', 'right', 'draw'));
+
+create index if not exists battle_results_left_idx on battle_results (left_student_id, finished_at desc);
+create index if not exists battle_results_right_idx on battle_results (right_student_id, finished_at desc);
+create index if not exists battle_results_class_idx on battle_results (class_id, finished_at desc);
+
+alter table battle_results enable row level security;
+
+drop policy if exists "Teachers read own battle results" on battle_results;
+create policy "Teachers read own battle results"
+  on battle_results for select to authenticated
+  using (teacher_id = auth.uid());
+
+create or replace function battle_rank(p jsonb)
+returns bigint[]
+language sql
+immutable
+as $$
+  select case
+    when coalesce((p->>'ko')::boolean, false) then array[3, 9999, 999999999]::bigint[]
+    when not coalesce((p->>'done')::boolean, false) then array[2, 9999, 999999999]::bigint[]
+    when coalesce(nullif(p->>'errors', '')::int, 0) = 0 then array[0, 0, coalesce(nullif(p->>'ms', '')::bigint, 0)]::bigint[]
+    else array[1, coalesce(nullif(p->>'errors', '')::bigint, 0), coalesce(nullif(p->>'ms', '')::bigint, 0)]::bigint[]
+  end;
+$$;
+
+create or replace function battle_winner_side(p_left jsonb, p_right jsonb)
+returns text
+language sql
+immutable
+as $$
+  select case
+    when battle_rank(p_left) < battle_rank(p_right) then 'left'
+    when battle_rank(p_left) > battle_rank(p_right) then 'right'
+    else 'draw'
+  end;
+$$;
+
+create or replace function save_battle_result(p_battle battles)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  left_slot battle_slots%rowtype;
+  right_slot battle_slots%rowtype;
+  left_res jsonb;
+  right_res jsonb;
+begin
+  if coalesce(p_battle.live->>'phase', '') <> 'result' then
+    return;
+  end if;
+  left_res := p_battle.live->'racers'->0->'result';
+  right_res := p_battle.live->'racers'->1->'result';
+  if jsonb_typeof(left_res) <> 'object' or jsonb_typeof(right_res) <> 'object' then
+    return;
+  end if;
+
+  select * into left_slot from battle_slots where battle_id = p_battle.id and side = 'left';
+  select * into right_slot from battle_slots where battle_id = p_battle.id and side = 'right';
+  if left_slot.id is null or right_slot.id is null then
+    return;
+  end if;
+
+  insert into battle_results (
+    battle_id, class_id, teacher_id,
+    left_student_id, left_name, left_hero,
+    right_student_id, right_name, right_hero,
+    winner_side, left_errors, right_errors, left_ko, right_ko
+  ) values (
+    p_battle.id, p_battle.class_id, p_battle.teacher_id,
+    left_slot.student_id, left_slot.student_name, coalesce(left_slot.hero_id, ''),
+    right_slot.student_id, right_slot.student_name, coalesce(right_slot.hero_id, ''),
+    battle_winner_side(left_res, right_res),
+    coalesce(nullif(left_res->>'errors', '')::int, 0),
+    coalesce(nullif(right_res->>'errors', '')::int, 0),
+    coalesce((left_res->>'ko')::boolean, false),
+    coalesce((right_res->>'ko')::boolean, false)
+  );
+end;
+$$;
+
+create or replace function record_battle_result()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if coalesce(new.live->>'phase', '') = 'result'
+     and coalesce(old.live->>'phase', '') is distinct from 'result' then
+    perform save_battle_result(new);
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists battles_record_result on battles;
+create trigger battles_record_result
+  after update of live on battles
+  for each row
+  execute function record_battle_result();
+
+insert into battle_results (
+  battle_id, class_id, teacher_id, finished_at,
+  left_student_id, left_name, left_hero,
+  right_student_id, right_name, right_hero,
+  winner_side, left_errors, right_errors, left_ko, right_ko
+)
+select
+  b.id, b.class_id, b.teacher_id, b.created_at,
+  ls.student_id, ls.student_name, coalesce(ls.hero_id, ''),
+  rs.student_id, rs.student_name, coalesce(rs.hero_id, ''),
+  battle_winner_side(b.live->'racers'->0->'result', b.live->'racers'->1->'result'),
+  coalesce(nullif(b.live#>>'{racers,0,result,errors}', '')::int, 0),
+  coalesce(nullif(b.live#>>'{racers,1,result,errors}', '')::int, 0),
+  coalesce((b.live#>>'{racers,0,result,ko}')::boolean, false),
+  coalesce((b.live#>>'{racers,1,result,ko}')::boolean, false)
+from battles b
+join battle_slots ls on ls.battle_id = b.id and ls.side = 'left'
+join battle_slots rs on rs.battle_id = b.id and rs.side = 'right'
+where b.live->>'phase' = 'result'
+  and jsonb_typeof(b.live->'racers'->0->'result') = 'object'
+  and jsonb_typeof(b.live->'racers'->1->'result') = 'object'
+  and not exists (select 1 from battle_results r where r.battle_id = b.id);
+
+create or replace function get_student_battle_history(p_student_id uuid)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if p_student_id is null then
+    return json_build_object('ok', true, 'rows', '[]'::json);
+  end if;
+  return json_build_object(
+    'ok', true,
+    'rows', coalesce((
+      select json_agg(json_build_object(
+        'id', r.id,
+        'finished_at', r.finished_at,
+        'left_student_id', r.left_student_id,
+        'left_name', r.left_name,
+        'left_hero', r.left_hero,
+        'right_student_id', r.right_student_id,
+        'right_name', r.right_name,
+        'right_hero', r.right_hero,
+        'winner_side', r.winner_side,
+        'left_errors', r.left_errors,
+        'right_errors', r.right_errors,
+        'left_ko', r.left_ko,
+        'right_ko', r.right_ko
+      ) order by r.finished_at desc)
+      from (
+        select *
+        from battle_results
+        where left_student_id = p_student_id or right_student_id = p_student_id
+        order by finished_at desc
+        limit 40
+      ) r
+    ), '[]'::json)
+  );
+end;
+$$;
+
+create or replace function get_class_battle_history(p_class_id uuid)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null or p_class_id is null then
+    return json_build_object('ok', false, 'error', 'auth', 'rows', '[]'::json);
+  end if;
+  if not exists (
+    select 1 from classes where id = p_class_id and teacher_id = auth.uid()
+  ) then
+    return json_build_object('ok', false, 'error', 'class', 'rows', '[]'::json);
+  end if;
+  return json_build_object(
+    'ok', true,
+    'rows', coalesce((
+      select json_agg(json_build_object(
+        'id', r.id,
+        'finished_at', r.finished_at,
+        'left_student_id', r.left_student_id,
+        'left_name', r.left_name,
+        'left_hero', r.left_hero,
+        'right_student_id', r.right_student_id,
+        'right_name', r.right_name,
+        'right_hero', r.right_hero,
+        'winner_side', r.winner_side,
+        'left_errors', r.left_errors,
+        'right_errors', r.right_errors,
+        'left_ko', r.left_ko,
+        'right_ko', r.right_ko
+      ) order by r.finished_at desc)
+      from (
+        select *
+        from battle_results
+        where class_id = p_class_id
+        order by finished_at desc
+        limit 200
+      ) r
+    ), '[]'::json)
+  );
+end;
+$$;
+
 revoke all on function battle_payload(uuid) from public;
 revoke all on function create_battle(uuid, uuid, uuid, text, text) from public;
 revoke all on function get_teacher_battle(uuid) from public;
@@ -674,6 +908,12 @@ revoke all on function get_student_battle(uuid) from public;
 revoke all on function respond_battle(uuid, uuid, boolean, text) from public;
 revoke all on function set_battle_live(uuid, jsonb) from public;
 revoke all on function push_battle_progress(uuid, uuid, int, int, bigint, bigint, boolean, boolean, int) from public;
+revoke all on function battle_rank(jsonb) from public;
+revoke all on function battle_winner_side(jsonb, jsonb) from public;
+revoke all on function save_battle_result(battles) from public;
+revoke all on function record_battle_result() from public;
+revoke all on function get_student_battle_history(uuid) from public;
+revoke all on function get_class_battle_history(uuid) from public;
 
 grant execute on function create_battle(uuid, uuid, uuid, text, text) to authenticated;
 grant execute on function get_teacher_battle(uuid) to authenticated;
@@ -683,6 +923,8 @@ grant execute on function get_student_battle(uuid) to anon, authenticated;
 grant execute on function respond_battle(uuid, uuid, boolean, text) to anon, authenticated;
 grant execute on function set_battle_live(uuid, jsonb) to authenticated;
 grant execute on function push_battle_progress(uuid, uuid, int, int, bigint, bigint, boolean, boolean, int) to anon, authenticated;
+grant execute on function get_student_battle_history(uuid) to anon, authenticated;
+grant execute on function get_class_battle_history(uuid) to authenticated;
 
 do $$
 begin

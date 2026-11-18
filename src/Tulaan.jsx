@@ -816,6 +816,10 @@ export default function TulaanPage({ students = [], classes = [], typingCourse =
           onSetup={backToSetup}
         />
       ) : null}
+
+      {phase === "setup" || phase === "result" ? (
+        <ClassBattleHistory classId={classId} refreshKey={`${phase}:${turn}:${battleId}`} />
+      ) : null}
     </section>
   );
 }
@@ -1424,6 +1428,175 @@ function StudentMirror({ battle, studentId }) {
   );
 }
 
+function historyWhen(ts) {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return "";
+  return (
+    d.toLocaleDateString("mn-MN", { month: "short", day: "numeric" })
+    + " "
+    + d.toLocaleTimeString("mn-MN", { hour: "2-digit", minute: "2-digit" })
+  );
+}
+
+function sameStudent(a, b) {
+  return String(a || "").toLowerCase() === String(b || "").toLowerCase();
+}
+
+export function battleOutcome(studentId, row) {
+  const mineLeft = sameStudent(row?.left_student_id, studentId);
+  const opponent = mineLeft ? row?.right_name : row?.left_name;
+  let outcome = "loss";
+  if (row?.winner_side === "draw") outcome = "draw";
+  else if ((row?.winner_side === "left") === mineLeft) outcome = "win";
+  return {
+    id: row?.id,
+    opponent: opponent || "Өрсөлдөгч",
+    outcome,
+    when: historyWhen(row?.finished_at),
+  };
+}
+
+const OUTCOME_LABEL = { win: "Ялсан", loss: "Ялагдсан", draw: "Тэнцсэн" };
+const OUTCOME_TONE = { win: "#2F6F4E", loss: "#9A3324", draw: "#24478F" };
+const OUTCOME_WASH = { win: "#E4F0E9", loss: "#FBE7E4", draw: "#EAEFF8" };
+
+function ClassBattleHistory({ classId, refreshKey = "" }) {
+  const [rows, setRows] = useState([]);
+  const [missing, setMissing] = useState(false);
+
+  useEffect(() => {
+    if (!supabase || !classId) {
+      setRows([]);
+      setMissing(false);
+      return undefined;
+    }
+    let stop = false;
+    supabase.rpc("get_class_battle_history", { p_class_id: classId }).then(({ data, error }) => {
+      if (stop) return;
+      if (error) {
+        setRows([]);
+        setMissing(/get_class_battle_history|battle_results|schema cache|does not exist/i.test(error.message || ""));
+        return;
+      }
+      setMissing(false);
+      setRows(Array.isArray(data?.rows) ? data.rows : []);
+    });
+    return () => {
+      stop = true;
+    };
+  }, [classId, refreshKey]);
+
+  return (
+    <div className="cn-card rounded-2xl p-4 sm:p-5 mt-4">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <h3 className="font-semibold" style={{ color: "#0F172A" }}>Тулааны түүх</h3>
+        {rows.length > 0 ? (
+          <span className="text-xs tabular-nums" style={{ color: "#64748B" }}>{rows.length} тулаан</span>
+        ) : null}
+      </div>
+      {missing ? (
+        <p className="text-sm" style={{ color: "#9A3324" }}>Түүх гаргахын тулд supabase-battles.sql-ийг дахин Run хийнэ үү.</p>
+      ) : rows.length === 0 ? (
+        <p className="text-sm" style={{ color: "#64748B" }}>Энэ ангид дууссан тулаан алга.</p>
+      ) : (
+        <ul>
+          {rows.map((row) => {
+            const winner = row.winner_side === "left" ? row.left_name : row.winner_side === "right" ? row.right_name : "";
+            return (
+              <li key={row.id} className="flex items-center justify-between gap-3 py-2.5 border-b last:border-b-0" style={{ borderColor: "#E6EAF2" }}>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium truncate" style={{ color: "#0F172A" }}>
+                    {row.left_name || "Сурагч"} <span style={{ color: "#94A3B8" }}>·</span> {row.right_name || "Сурагч"}
+                  </div>
+                  <div className="text-xs mt-0.5" style={{ color: "#64748B" }}>{historyWhen(row.finished_at)}</div>
+                </div>
+                <span
+                  className="shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full"
+                  style={{
+                    background: winner ? "#E4F0E9" : "#EAEFF8",
+                    color: winner ? "#2F6F4E" : "#24478F",
+                  }}
+                >
+                  {winner ? `${winner} ялсан` : "Тэнцсэн"}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+export function BattleHistoryList({ studentId, rows = null, refreshKey = "", limit = 8 }) {
+  const [loaded, setLoaded] = useState(null);
+  const [missing, setMissing] = useState(false);
+
+  useEffect(() => {
+    if (rows || !supabase || !studentId) {
+      setLoaded(null);
+      setMissing(false);
+      return undefined;
+    }
+    let stop = false;
+    supabase.rpc("get_student_battle_history", { p_student_id: studentId }).then(({ data, error }) => {
+      if (stop) return;
+      if (error) {
+        setMissing(/get_student_battle_history|schema cache|does not exist/i.test(error.message || ""));
+        setLoaded([]);
+        return;
+      }
+      setMissing(false);
+      setLoaded(Array.isArray(data?.rows) ? data.rows : []);
+    });
+    return () => {
+      stop = true;
+    };
+  }, [rows, studentId, refreshKey]);
+
+  const source = rows || loaded || [];
+  const mine = source.filter((row) => sameStudent(row.left_student_id, studentId) || sameStudent(row.right_student_id, studentId));
+  const views = mine.slice(0, limit).map((row) => battleOutcome(studentId, row));
+  const wins = mine.filter((row) => battleOutcome(studentId, row).outcome === "win").length;
+  const losses = mine.filter((row) => battleOutcome(studentId, row).outcome === "loss").length;
+  const draws = mine.length - wins - losses;
+
+  return (
+    <div className="mt-3">
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <div className="text-xs font-semibold" style={{ color: "#64748B" }}>Тулааны түүх</div>
+        {mine.length > 0 ? (
+          <div className="text-xs tabular-nums" style={{ color: "#334155" }}>
+            {wins} ялалт · {losses} ялагдал{draws ? ` · ${draws} тэнцээ` : ""}
+          </div>
+        ) : null}
+      </div>
+      {missing ? (
+        <p className="text-xs" style={{ color: "#9A3324" }}>Түүх гаргахын тулд supabase-battles.sql-ийг дахин Run хийнэ үү.</p>
+      ) : views.length === 0 ? (
+        <p className="text-xs" style={{ color: "#64748B" }}>Дууссан тулаан алга.</p>
+      ) : (
+        <ul>
+          {views.map((row) => (
+            <li key={row.id} className="flex items-center justify-between gap-3 py-1.5 border-b last:border-b-0" style={{ borderColor: "#E6EAF2" }}>
+              <div className="min-w-0">
+                <div className="text-sm font-medium truncate" style={{ color: "#0F172A" }}>{row.opponent}</div>
+                {row.when ? <div className="text-xs" style={{ color: "#64748B" }}>{row.when}</div> : null}
+              </div>
+              <span
+                className="shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full"
+                style={{ background: OUTCOME_WASH[row.outcome], color: OUTCOME_TONE[row.outcome] }}
+              >
+                {OUTCOME_LABEL[row.outcome]}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function StudentBattleScreen({ studentId, page = false, onActivity, children }) {
   const [pack, setPack] = useState(null);
   const [heroId, setHeroId] = useState(HEROES[0].id);
@@ -1529,10 +1702,26 @@ export function StudentBattleScreen({ studentId, page = false, onActivity, child
   }
 
   if (!page) return children;
-  if (card) return card;
+  const history = (
+    <BattleHistoryList
+      studentId={studentId}
+      refreshKey={pack ? `${pack.battleId}:${pack.status}:${pack.slotStatus}` : "idle"}
+    />
+  );
+  if (card) {
+    return (
+      <div>
+        {card}
+        <div className="cn-card rounded-2xl p-4 sm:p-5">{history}</div>
+      </div>
+    );
+  }
   return (
-    <div className="cn-card rounded-2xl p-8 text-center text-sm" style={{ color: "#64748B", borderStyle: "dashed" }}>
-      Одоогоор тулаан алга. Багш хоёр сурагч сонгож хүсэлт илгээсний дараа энд гарна.
+    <div className="cn-card rounded-2xl p-6 sm:p-8">
+      <p className="text-sm text-center" style={{ color: "#64748B" }}>
+        Одоогоор тулаан алга. Багш хоёр сурагч сонгож хүсэлт илгээсний дараа энд гарна.
+      </p>
+      {history}
     </div>
   );
 }
