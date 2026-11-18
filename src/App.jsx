@@ -26,6 +26,8 @@ import {
   Clock,
   Lock,
   Unlock,
+  Eye,
+  EyeOff,
   Bell,
   RotateCcw,
   ZoomIn,
@@ -1164,6 +1166,8 @@ function lessonGroupMissingError(error) {
   return error?.code === "42P01" || error?.code === "PGRST205" || error?.code === "PGRST204" || error?.code === "23502" || /lesson_groups|group_id|parent_id|subject_id/i.test(msg);
 }
 
+const TYPING_KEYBOARD_ID = "__keyboard";
+
 function mapTypingDrill(row) {
   return {
     id: row.id,
@@ -1173,6 +1177,10 @@ function mapTypingDrill(row) {
     prompt: row.prompt || "",
     goalWpm: Number(row.goal_wpm) || 0,
   };
+}
+
+function typingKeyboardVisible(row) {
+  return !row || row.prompt !== "hide";
 }
 
 const HEADER_TITLE_DEFAULT = "Багшийн самбар";
@@ -1242,6 +1250,7 @@ export default function ClassroomApp() {
   const [typingTableMissing, setTypingTableMissing] = useState(false);
   const [typingSavingId, setTypingSavingId] = useState(null);
   const [typingEditError, setTypingEditError] = useState("");
+  const [showTypingKeyboard, setShowTypingKeyboard] = useState(true);
   const [activeClassId, setActiveClassId] = useState(null);
   const [studentLastNameInput, setStudentLastNameInput] = useState("");
   const [studentFirstNameInput, setStudentFirstNameInput] = useState("");
@@ -1386,7 +1395,9 @@ export default function ClassroomApp() {
       }
       const drillsRes = await supabase.from("typing_drills").select("*");
       if (!drillsRes.error) {
-        setTypingOverrides((drillsRes.data || []).map(mapTypingDrill));
+        const drillRows = drillsRes.data || [];
+        setShowTypingKeyboard(typingKeyboardVisible(drillRows.find((row) => row.id === TYPING_KEYBOARD_ID)));
+        setTypingOverrides(drillRows.filter((row) => row.id !== TYPING_KEYBOARD_ID).map(mapTypingDrill));
         setTypingTableMissing(false);
       } else if (typingTableMissingError(drillsRes.error)) {
         setTypingOverrides([]);
@@ -2995,6 +3006,49 @@ export default function ClassroomApp() {
   const allAttemptsSorted = [...attempts].sort((a, b) => b.date - a.date);
   const typingCourse = mergeTypingLessons(typingOverrides);
 
+  useEffect(() => {
+    if (!supabase || role !== "student") return undefined;
+    let stop = false;
+    const tick = async () => {
+      const { data, error } = await supabase.from("typing_drills").select("prompt").eq("id", TYPING_KEYBOARD_ID).maybeSingle();
+      if (stop || error) return;
+      setShowTypingKeyboard(typingKeyboardVisible(data));
+    };
+    tick();
+    const id = setInterval(tick, 2000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, [role]);
+
+  async function setTypingKeyboardVisible(show) {
+    const next = Boolean(show);
+    const prev = showTypingKeyboard;
+    setShowTypingKeyboard(next);
+    if (!supabase) return false;
+    const { error } = await supabase.from("typing_drills").upsert({
+      id: TYPING_KEYBOARD_ID,
+      title: "Гарын зураг",
+      focus: "",
+      tip: "",
+      prompt: next ? "show" : "hide",
+      goal_wpm: 12,
+      updated_at: new Date().toISOString(),
+    });
+    if (error) {
+      setShowTypingKeyboard(prev);
+      if (typingTableMissingError(error)) setTypingTableMissing(true);
+      setTypingEditError(typingTableMissingError(error)
+        ? "Гарын зураг хадгалахын тулд Supabase SQL Editor-т supabase-typing-drills.sql-ийг Run хийнэ үү."
+        : "Гарын зургийн тохиргоо хадгалагдсангүй.");
+      return false;
+    }
+    setTypingTableMissing(false);
+    setTypingEditError("");
+    return true;
+  }
+
   async function saveTypingDrill(draft) {
     if (!supabase) return;
     const title = String(draft.title || "").trim();
@@ -3366,6 +3420,8 @@ export default function ClassroomApp() {
               typingSavingId={typingSavingId}
               typingEditError={typingEditError}
               typingTableMissing={typingTableMissing}
+              showTypingKeyboard={showTypingKeyboard}
+              setTypingKeyboardVisible={setTypingKeyboardVisible}
               updateSubjectGrade={updateSubjectGrade}
               assignLessonSubject={assignLessonSubject}
               lessonGroups={lessonGroups}
@@ -3379,7 +3435,7 @@ export default function ClassroomApp() {
           )}
 
           {role === "student" && (
-            <StudentBattleScreen studentId={studentSession?.id || ""} page={studentTab === "tulaan"} onActivity={markBattle}>
+            <StudentBattleScreen studentId={studentSession?.id || ""} page={studentTab === "tulaan"} onActivity={markBattle} showKeyboard={showTypingKeyboard}>
             {studentTab === "tulaan" ? null : <StudentView
               tab={studentTab}
               setTab={setStudentTab}
@@ -3400,6 +3456,7 @@ export default function ClassroomApp() {
               studentSession={studentSession}
               retakeGrants={retakeGrants}
               typingCourse={typingCourse}
+              showTypingKeyboard={showTypingKeyboard}
             />}
             </StudentBattleScreen>
           )}
@@ -4503,6 +4560,8 @@ function TeacherView(props) {
     typingSavingId,
     typingEditError,
     typingTableMissing,
+    showTypingKeyboard = true,
+    setTypingKeyboardVisible,
     updateSubjectGrade,
     assignLessonSubject,
   } = props;
@@ -4571,7 +4630,15 @@ function TeacherView(props) {
   }
   if (tab === "quiz") return <QuizBuilder {...props} />;
   if (tab === "tulaan") {
-    return <TulaanPage students={students} classes={classes} typingCourse={typingCourse} />;
+    return (
+      <TulaanPage
+        students={students}
+        classes={classes}
+        typingCourse={typingCourse}
+        showKeyboard={showTypingKeyboard}
+        onToggleKeyboard={setTypingKeyboardVisible}
+      />
+    );
   }
   if (tab === "results") return <ResultsTable {...props} />;
   return null;
@@ -5007,6 +5074,8 @@ function LessonBuilder({
   typingSavingId,
   typingTableMissing = false,
   typingEditError = "",
+  showTypingKeyboard = true,
+  setTypingKeyboardVisible,
 }) {
   const [subjectName, setSubjectName] = useState("");
   const [addGrade, setAddGrade] = useState(6);
@@ -5549,7 +5618,7 @@ function LessonBuilder({
             >
               {typingFolder ? <Keyboard size={20} /> : <Presentation size={20} />}
             </span>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <h3 className="font-semibold" style={{ color: "#0F172A" }}>{typingFolder ? "Арван хурууны дасгал" : "Хичээлийн материал"}</h3>
               <p className="text-xs mt-0.5" style={{ color: "#64748B" }}>
                 {typingFolder
@@ -5559,6 +5628,16 @@ function LessonBuilder({
                     : "Зүүн жагсаалтаас хичээл сонгоно"}
               </p>
             </div>
+            {typingFolder ? (
+              <button
+                type="button"
+                onClick={() => setTypingKeyboardVisible?.(!showTypingKeyboard)}
+                className="cn-btn-secondary shrink-0 ml-auto rounded-md px-3 py-2 text-sm font-medium inline-flex items-center gap-1.5"
+              >
+                {showTypingKeyboard ? <EyeOff size={15} /> : <Eye size={15} />}
+                {showTypingKeyboard ? "Гарын зураг нуух" : "Гарын зураг харуулах"}
+              </button>
+            ) : null}
           </div>
           {typingFolder ? (
             <>
@@ -6863,7 +6942,7 @@ function StudentLessonTree({ groups, grade, selectedId, onOpen }) {
   return <div className="space-y-0.5">{tree}</div>;
 }
 
-function StudentFolderLessons({ studentId, grade, groups = [], materials = [], course, onOpenMaterial, folderId, setFolderId }) {
+function StudentFolderLessons({ studentId, grade, groups = [], materials = [], course, onOpenMaterial, folderId, setFolderId, showKeyboard = true }) {
   const hasGrade = Number.isFinite(grade) && grade > 0;
   const gradeGroups = groups.filter((item) => !item.subjectId && (!hasGrade || item.grade === grade));
   const selected = gradeGroups.find((item) => item.id === folderId) || null;
@@ -6889,6 +6968,7 @@ function StudentFolderLessons({ studentId, grade, groups = [], materials = [], c
               materialGroups={gradeGroups}
               course={course}
               onOpenMaterial={onOpenMaterial}
+              showKeyboard={showKeyboard}
             />
           ) : selected ? (
             folderMaterials.length > 0 ? (
@@ -7035,7 +7115,7 @@ function StudentHome({ materialCount, quizzes, attempts, onOpenLessons, onOpenQu
 }
 
 function StudentView(props) {
-  const { tab, setTab, lessons, lessonGroups = [], quizzes, myAttempts, studentSession, setActiveLesson, typingCourse = TYPING_LESSONS } = props;
+  const { tab, setTab, lessons, lessonGroups = [], quizzes, myAttempts, studentSession, setActiveLesson, typingCourse = TYPING_LESSONS, showTypingKeyboard = true } = props;
   const [folderId, setFolderId] = useState(null);
   const studentGrade = Number(studentSession?.grade);
   const studentMaterials = (lessons || []).filter((material) => {
@@ -7067,6 +7147,7 @@ function StudentView(props) {
         groups={lessonGroups}
         materials={studentMaterials}
         course={typingCourse}
+        showKeyboard={showTypingKeyboard}
         onOpenMaterial={(item) => { setActiveLesson(item); setTab("lesson"); }}
         folderId={folderId}
         setFolderId={setFolderId}

@@ -229,7 +229,7 @@ export function TypingEditor({ course, onSave, onReset, savingId }) {
   );
 }
 
-export default function TypingCourse({ studentId, materials = [], materialGroups = [], onOpenMaterial, course = TYPING_LESSONS }) {
+export default function TypingCourse({ studentId, materials = [], materialGroups = [], onOpenMaterial, course = TYPING_LESSONS, showKeyboard = true }) {
   const [progress, setProgress] = useState(() => loadTypingProgress(studentId));
   const [activeId, setActiveId] = useState(null);
 
@@ -252,6 +252,7 @@ export default function TypingCourse({ studentId, materials = [], materialGroups
         key={active.id}
         lesson={active}
         nextLesson={next}
+        showKeyboard={showKeyboard}
         onBack={() => setActiveId(null)}
         onOpen={(id) => setActiveId(id)}
         onDone={(result) => handleDone(active, result)}
@@ -447,7 +448,7 @@ function TypingMap({ progress, materials, materialGroups = [], onOpen, onOpenMat
   );
 }
 
-function TypingPractice({ lesson, nextLesson, onBack, onOpen, onDone }) {
+function TypingPractice({ lesson, nextLesson, onBack, onOpen, onDone, showKeyboard = true }) {
   const prompt = lesson.prompt;
   const [index, setIndex] = useState(0);
   const [errors, setErrors] = useState(0);
@@ -652,7 +653,7 @@ function TypingPractice({ lesson, nextLesson, onBack, onOpen, onDone }) {
               : `Дараагийнх: ${expected} · ${finger ? FINGER_LABEL[finger] : "товч"}`}
             {shiftSide ? ` · ${shiftSide === "left" ? "Зүүн" : "Баруун"} Shift дарж байгаад үсгээ дар` : ""}
           </div>
-          <Keyboard nextChar={expected} />
+          {showKeyboard ? <Keyboard nextChar={expected} /> : null}
           <p className="text-xs mt-3" style={{ color: "#64748B" }}>
             Энд дарж бичнэ. Буруу үсэг тоологдоод зөв үсгийг хүлээнэ. 90% хүрвэл дараагийн дасгал нээгдэнэ.
           </p>

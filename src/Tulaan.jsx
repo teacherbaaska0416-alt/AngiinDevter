@@ -364,7 +364,7 @@ function fightersFromLive(saved) {
   return rows;
 }
 
-export default function TulaanPage({ students = [], classes = [], typingCourse = [] }) {
+export default function TulaanPage({ students = [], classes = [], typingCourse = [], showKeyboard = true, onToggleKeyboard }) {
   const prompts = useMemo(() => battlePrompts(typingCourse), [typingCourse]);
   const [classId, setClassId] = useState("");
   const [leftId, setLeftId] = useState("");
@@ -376,6 +376,7 @@ export default function TulaanPage({ students = [], classes = [], typingCourse =
   const [lockedFighters, setLockedFighters] = useState(null);
   const [sending, setSending] = useState(false);
   const [battleError, setBattleError] = useState("");
+  const [keyboardError, setKeyboardError] = useState("");
   const [turn, setTurn] = useState(0);
   const [count, setCount] = useState(3);
   const [results, setResults] = useState(emptyBoard);
@@ -773,12 +774,28 @@ export default function TulaanPage({ students = [], classes = [], typingCourse =
             Багш хоёр сурагч сонгоод хүсэлт илгээнэ. Тулаан арван хурууны суурь мөрийн 1-р дасгалаас эхэлнэ. Дасгал дуусмагц өрсөлдөгчөө хүлээлгүй дараагийнх руу орно. Амь дуусвал тулаан дуусаж, ялагч тодорно.
           </p>
         </div>
-        {phase !== "setup" ? (
-          <button type="button" onClick={backToSetup} className="cn-btn-secondary rounded-md px-3 py-2 text-sm font-medium">
-            Болих
-          </button>
-        ) : null}
+        <div className="flex flex-wrap gap-2">
+          {onToggleKeyboard ? (
+            <button
+              type="button"
+              onClick={async () => {
+                setKeyboardError("");
+                const ok = await onToggleKeyboard(!showKeyboard);
+                if (ok === false) setKeyboardError("Гарын зураг хадгалагдсангүй. supabase-typing-drills.sql-ийг Run хийнэ үү.");
+              }}
+              className="cn-btn-secondary rounded-md px-3 py-2 text-sm font-medium"
+            >
+              {showKeyboard ? "Гарын зураг нуух" : "Гарын зураг харуулах"}
+            </button>
+          ) : null}
+          {phase !== "setup" ? (
+            <button type="button" onClick={backToSetup} className="cn-btn-secondary rounded-md px-3 py-2 text-sm font-medium">
+              Болих
+            </button>
+          ) : null}
+        </div>
       </div>
+      {keyboardError ? <p className="text-sm mb-3" style={{ color: "#9A3324" }}>{keyboardError}</p> : null}
 
       {phase === "setup" ? (
         <Setup
@@ -814,6 +831,7 @@ export default function TulaanPage({ students = [], classes = [], typingCourse =
           now={now}
           onRematch={rematch}
           onSetup={backToSetup}
+          showKeyboard={showKeyboard}
         />
       ) : null}
 
@@ -838,6 +856,7 @@ function BattleStage({
   onForfeit,
   onRematch,
   onSetup,
+  showKeyboard = true,
 }) {
   if (fighters.some((fighter) => !fighter?.hero)) return null;
   const mine = mineSlot == null ? null : fighters[mineSlot];
@@ -903,7 +922,7 @@ function BattleStage({
       ) : null}
 
       {phase === "type" && mine ? (
-        <TypingLane fighter={mine} opponent={opponent} prompt={mine.prompt || prompt} wrong={wrong} latin={latin} onForfeit={fighterCanForfeit(mine) ? onForfeit : null} />
+        <TypingLane fighter={mine} opponent={opponent} prompt={mine.prompt || prompt} wrong={wrong} latin={latin} showKeyboard={showKeyboard} onForfeit={fighterCanForfeit(mine) ? onForfeit : null} />
       ) : null}
 
       {phase === "type" && mineSlot == null ? (
@@ -949,7 +968,7 @@ function LaneWatch({ fighter, prompt }) {
   );
 }
 
-function TypingLane({ fighter, opponent, prompt, wrong, latin, onForfeit }) {
+function TypingLane({ fighter, opponent, prompt, wrong, latin, onForfeit, showKeyboard = true }) {
   const index = fighter.index || 0;
   const expected = prompt[index] || "";
   const finger = fingerFor(expected);
@@ -981,7 +1000,7 @@ function TypingLane({ fighter, opponent, prompt, wrong, latin, onForfeit }) {
           {finger && !fighter.result ? ` · ${FINGER_LABEL[finger]}` : ""}
         </div>
       </div>
-      {fighter.result ? null : <BattleKeyboard nextChar={expected} />}
+      {fighter.result || !showKeyboard ? null : <BattleKeyboard nextChar={expected} />}
       {onForfeit ? (
         <div className="mt-4 flex justify-end">
           <button type="button" onClick={onForfeit} className="text-sm underline" style={{ color: "#64748B" }}>
@@ -1337,7 +1356,7 @@ function useStudentRace({ active, battleId, studentId, prompt, lessons = [], les
   };
 }
 
-function StudentMirror({ battle, studentId }) {
+function StudentMirror({ battle, studentId, showKeyboard = true }) {
   const live = battle.live || {};
   const phase = FIGHT_PHASES.has(live.phase) ? live.phase : "lobby";
   const [now, setNow] = useState(() => Date.now());
@@ -1422,6 +1441,7 @@ function StudentMirror({ battle, studentId }) {
           wrong={race.wrong}
           latin={race.latin}
           onForfeit={race.forfeit}
+          showKeyboard={showKeyboard}
         />
       )}
     </section>
@@ -1597,7 +1617,7 @@ export function BattleHistoryList({ studentId, rows = null, refreshKey = "", lim
   );
 }
 
-export function StudentBattleScreen({ studentId, page = false, onActivity, children }) {
+export function StudentBattleScreen({ studentId, page = false, onActivity, showKeyboard = true, children }) {
   const [pack, setPack] = useState(null);
   const [heroId, setHeroId] = useState(HEROES[0].id);
   const [busy, setBusy] = useState(false);
@@ -1631,6 +1651,7 @@ export function StudentBattleScreen({ studentId, page = false, onActivity, child
     <StudentMirror
       battle={{ ...pack.battle, onSync: (data) => setPack(readStudentPack(data)) }}
       studentId={studentId}
+      showKeyboard={showKeyboard}
     />
   ) : null;
   if (page && mirror) return mirror;
