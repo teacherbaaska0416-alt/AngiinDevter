@@ -299,7 +299,12 @@ begin
          live = case
        when coalesce(p_live, '{}'::jsonb) ? 'racers' then
          coalesce(live, '{}'::jsonb) || jsonb_build_object(
-           'phase', coalesce(p_live->>'phase', live->>'phase', 'lobby'),
+           'phase', case
+             when coalesce(live->>'phase', '') = 'result'
+              and coalesce(p_live->>'phase', '') is distinct from 'countdown'
+               then 'result'
+             else coalesce(p_live->>'phase', live->>'phase', 'lobby')
+           end,
            'countdownStartedAt', coalesce(p_live->'countdownStartedAt', live->'countdownStartedAt', 'null'::jsonb),
            'lesson', coalesce(p_live->'lesson', live->'lesson', '0'::jsonb),
            'lessons', coalesce(p_live->'lessons', live->'lessons', '[]'::jsonb),
@@ -307,9 +312,20 @@ begin
          )
        else
          coalesce(live, '{}'::jsonb) || jsonb_build_object(
-           'phase', coalesce(p_live->>'phase', live->>'phase', 'lobby'),
+           'phase', case
+             when coalesce(live->>'phase', '') = 'result'
+              and coalesce(p_live->>'phase', '') is distinct from 'countdown'
+               then 'result'
+             else coalesce(p_live->>'phase', live->>'phase', 'lobby')
+           end,
            'countdownStartedAt', coalesce(p_live->'countdownStartedAt', live->'countdownStartedAt', 'null'::jsonb)
-         )
+         ) || case
+           when coalesce(p_live, '{}'::jsonb) ? 'lessons'
+            and jsonb_typeof(p_live->'lessons') = 'array'
+            and jsonb_array_length(p_live->'lessons') > 0
+             then jsonb_build_object('lessons', p_live->'lessons')
+           else '{}'::jsonb
+         end
      end
    where id = p_battle_id
      and teacher_id = auth.uid()
@@ -362,15 +378,15 @@ declare
   lesson_count int;
   next_i int;
   next_prompt text;
-  next_id text;
-  new_live jsonb;
-  i int;
+  racer_lesson int;
+  current_prompt text;
+  prompt_len int;
 begin
   if p_student_id is null or p_battle_id is null then
     return json_build_object('ok', false, 'error', 'not_found');
   end if;
 
-  select * into b from battles where id = p_battle_id and status = 'ready';
+  select * into b from battles where id = p_battle_id and status = 'ready' for update;
   if b.id is null or coalesce(b.live->>'phase', '') <> 'type' then
     return get_student_battle(p_student_id);
   end if;
@@ -382,11 +398,14 @@ begin
     return json_build_object('ok', false, 'error', 'slot');
   end if;
 
-  if p_lesson is not null and p_lesson is distinct from coalesce((b.live->>'lesson')::int, 0) then
+  slot := case when mine.side = 'right' then 1 else 0 end;
+  if p_lesson is not null and p_lesson is distinct from coalesce(
+    nullif(b.live#>>array['racers', slot::text, 'lesson'], '')::int,
+    (b.live->>'lesson')::int,
+    0
+  ) then
     return get_student_battle(p_student_id);
   end if;
-
-  slot := case when mine.side = 'right' then 1 else 0 end;
   racers := coalesce(b.live->'racers', '[]'::jsonb);
   if jsonb_typeof(racers) <> 'array' or jsonb_array_length(racers) < 2 then
     racers := '[
@@ -399,10 +418,27 @@ begin
     return get_student_battle(p_student_id);
   end if;
 
-  typed := greatest(0, least(coalesce(p_index, 0), length(b.prompt)));
+  racer_lesson := coalesce(
+    nullif(racers->slot->>'lesson', '')::int,
+    (b.live->>'lesson')::int,
+    0
+  );
+  if racer_lesson < 0 then
+    racer_lesson := 0;
+  end if;
+  if jsonb_typeof(b.live->'lessons') = 'array' and jsonb_array_length(b.live->'lessons') > 0 then
+    if racer_lesson >= jsonb_array_length(b.live->'lessons') then
+      racer_lesson := 0;
+    end if;
+    current_prompt := coalesce(b.live->'lessons'->racer_lesson->>'prompt', b.prompt, '');
+  else
+    current_prompt := coalesce(b.prompt, '');
+  end if;
+  prompt_len := length(current_prompt);
+  typed := greatest(0, least(coalesce(p_index, 0), prompt_len));
   misses := greatest(0, coalesce(p_errors, 0));
   started := coalesce(p_started_at, nullif(racers->slot->>'startedAt', '')::bigint);
-  finished := coalesce(p_forfeit, false) or coalesce(p_done, false);
+  finished := coalesce(p_forfeit, false);
 
   if finished then
     ms := greatest(1, coalesce(p_ms, 1));
@@ -410,13 +446,9 @@ begin
       'ms', ms,
       'errors', misses,
       'index', typed,
-      'done', (not coalesce(p_forfeit, false)) and length(b.prompt) > 0 and typed >= length(b.prompt),
-      'forfeit', coalesce(p_forfeit, false),
-      'wpm', case
-        when (not coalesce(p_forfeit, false)) and typed >= length(b.prompt) and length(b.prompt) > 0
-          then round((length(b.prompt) / 5.0) / (greatest(ms, 1000) / 60000.0))
-        else 0
-      end
+      'done', false,
+      'forfeit', true,
+      'wpm', 0
     );
   else
     result := 'null'::jsonb;
@@ -426,6 +458,7 @@ begin
     'index', typed,
     'errors', misses,
     'bank', coalesce(nullif(racers->slot->>'bank', '')::int, 0),
+    'lesson', racer_lesson,
     'startedAt', to_jsonb(started),
     'result', result
   );
@@ -515,40 +548,46 @@ begin
          true
        )
      where id = p_battle_id;
-  elsif length(coalesce(b.prompt, '')) > 0
-    and coalesce(nullif(left_row->>'index', '')::int, 0) >= length(b.prompt)
-    and coalesce(nullif(right_row->>'index', '')::int, 0) >= length(b.prompt)
+  elsif prompt_len > 0
+    and typed >= prompt_len
+    and not coalesce(p_forfeit, false)
     and jsonb_typeof(racers->'lessons') = 'array'
     and jsonb_array_length(racers->'lessons') > 0
   then
     lesson_count := jsonb_array_length(racers->'lessons');
-    next_i := coalesce((racers->>'lesson')::int, 0) + 1;
+    next_i := racer_lesson + 1;
     if next_i >= lesson_count or next_i < 0 then
       next_i := 0;
     end if;
     next_prompt := racers->'lessons'->next_i->>'prompt';
-    next_id := coalesce(racers->'lessons'->next_i->>'id', '');
     if length(coalesce(next_prompt, '')) > 0 then
-      new_live := racers;
-      for i in 0..1 loop
-        new_live := jsonb_set(
-          new_live,
-          array['racers', i::text, 'bank'],
-          to_jsonb(
-            coalesce((new_live#>>array['racers', i::text, 'bank'])::int, 0)
-            + coalesce((new_live#>>array['racers', i::text, 'index'])::int, 0)
-          ),
-          true
-        );
-        new_live := jsonb_set(new_live, array['racers', i::text, 'index'], '0'::jsonb, true);
-        new_live := jsonb_set(new_live, array['racers', i::text, 'result'], 'null'::jsonb, true);
-      end loop;
-      new_live := jsonb_set(new_live, '{lesson}', to_jsonb(next_i), true);
-      new_live := jsonb_set(new_live, '{phase}', '"type"'::jsonb, true);
       update battles
-         set prompt = next_prompt,
-             prompt_id = next_id,
-             live = new_live
+         set live = jsonb_set(
+           jsonb_set(
+             jsonb_set(
+               jsonb_set(
+                 jsonb_set(
+                   live,
+                   array['racers', slot::text, 'bank'],
+                   to_jsonb(coalesce((live#>>array['racers', slot::text, 'bank'])::int, 0) + typed),
+                   true
+                 ),
+                 array['racers', slot::text, 'index'],
+                 '0'::jsonb,
+                 true
+               ),
+               array['racers', slot::text, 'result'],
+               'null'::jsonb,
+               true
+             ),
+             array['racers', slot::text, 'lesson'],
+             to_jsonb(next_i),
+             true
+           ),
+           array['racers', slot::text, 'startedAt'],
+           'null'::jsonb,
+           true
+         )
        where id = p_battle_id;
     end if;
   elsif both_done then

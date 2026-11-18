@@ -102,6 +102,61 @@ export function fingerFor(ch) {
   return CHAR_FINGER[ch] || CHAR_FINGER[ch.toLocaleLowerCase("mn")] || null;
 }
 
+const MN_CODE_ROWS = [
+  ["Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7", "Digit8", "Digit9", "Digit0", "Minus", "Equal"],
+  ["KeyQ", "KeyW", "KeyE", "KeyR", "KeyT", "KeyY", "KeyU", "KeyI", "KeyO", "KeyP", "BracketLeft", "BracketRight"],
+  ["KeyA", "KeyS", "KeyD", "KeyF", "KeyG", "KeyH", "KeyJ", "KeyK", "KeyL", "Semicolon", "Quote"],
+  ["KeyZ", "KeyX", "KeyC", "KeyV", "KeyB", "KeyN", "KeyM", "Comma", "Period", "Slash"],
+];
+
+const MN_CHAR_BY_CODE = { Space: " " };
+KEY_ROWS.forEach((row, rowIndex) => {
+  const codes = MN_CODE_ROWS[rowIndex] || [];
+  let codeIndex = 0;
+  row.forEach((key) => {
+    const ch = key.chars?.[0];
+    if (!ch) return;
+    const code = codes[codeIndex];
+    codeIndex += 1;
+    if (code) MN_CHAR_BY_CODE[code] = ch;
+  });
+});
+
+function normalizeMnChar(ch) {
+  if (!ch) return "";
+  const mapped = {
+    "\u0473": "ө",
+    "\u0472": "Ө",
+    "\u00f6": "ө",
+    "\u00d6": "Ө",
+    "\u00f8": "ө",
+    "\u00d8": "Ө",
+    "\u00fc": "ү",
+    "\u00dc": "Ү",
+    "\u04f1": "ү",
+    "\u04f0": "Ү",
+    "\u00a0": " ",
+    "\u202f": " ",
+    "\u2009": " ",
+  };
+  return mapped[ch] || ch;
+}
+
+export function matchesPromptChar(event, expected) {
+  const want = normalizeMnChar(expected);
+  if (!want) return false;
+  const raw = event.key && event.key.length === 1 ? normalizeMnChar(event.key) : "";
+  if (raw && raw.toLocaleLowerCase("mn") === want.toLocaleLowerCase("mn")) return true;
+  const base = MN_CHAR_BY_CODE[event.code] || "";
+  if (!base) return false;
+  if (base === " ") return want === " ";
+  const caps = Boolean(event.getModifierState?.("CapsLock"));
+  const upper = Boolean(event.shiftKey) !== caps;
+  const physical = upper ? base.toLocaleUpperCase("mn") : base;
+  if (physical === want) return true;
+  return base.toLocaleLowerCase("mn") === want.toLocaleLowerCase("mn");
+}
+
 export function isUpperCyr(ch) {
   if (!ch || ch === " ") return false;
   const lower = ch.toLocaleLowerCase("mn");

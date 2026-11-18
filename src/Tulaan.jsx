@@ -12,6 +12,7 @@ import {
   FINGER_LABEL,
   fingerFor,
   shiftSideFor,
+  matchesPromptChar,
 } from "./typingCourse.js";
 
 const HEROES = [
@@ -51,13 +52,32 @@ const HEROES = [
 
 function battlePrompts(course) {
   const source = course?.length ? course : TYPING_LESSONS;
+  const home = source.filter((lesson) => lesson.section === "home" && String(lesson.prompt || "").trim());
+  if (home.length) return home;
   const rows = source.filter((lesson) => String(lesson.prompt || "").trim());
-  return rows.length ? rows : TYPING_LESSONS.filter((lesson) => String(lesson.prompt || "").trim());
+  return rows.length ? rows : TYPING_LESSONS.filter((lesson) => lesson.section === "home");
 }
 
-function taskLabel(live, prompts) {
-  const list = Array.isArray(live?.lessons) && live.lessons.length ? live.lessons : prompts || [];
-  const index = Number(live?.lesson) || 0;
+function lessonList(live, prompts) {
+  if (Array.isArray(live?.lessons) && live.lessons.length) return live.lessons;
+  if (Array.isArray(prompts) && prompts.length) return prompts;
+  return TYPING_LESSONS.filter((lesson) => lesson.section === "home" && String(lesson.prompt || "").trim());
+}
+
+function lessonIndexOf(row, live) {
+  if (row && row.lesson != null && row.lesson !== "") return Number(row.lesson) || 0;
+  return Number(live?.lesson) || 0;
+}
+
+function promptOf(live, prompts, lessonIndex) {
+  const list = lessonList(live, prompts);
+  const item = list[lessonIndex] || list[0];
+  return item?.prompt || "";
+}
+
+function taskLabel(live, prompts, lessonIndex) {
+  const list = lessonList(live, prompts);
+  const index = lessonIndex == null ? (Number(live?.lesson) || 0) : (Number(lessonIndex) || 0);
   const item = list[index] || list[0];
   if (!item) return "Дасгал 1";
   const title = item.title ? `. ${item.title}` : "";
@@ -265,7 +285,7 @@ function emptyBoard() {
 }
 
 function blankRacer() {
-  return { index: 0, errors: 0, bank: 0, startedAt: null, result: null };
+  return { index: 0, errors: 0, bank: 0, lesson: 0, startedAt: null, result: null };
 }
 
 function lanesFromLive(live) {
@@ -277,6 +297,7 @@ function lanesFromLive(live) {
       index: Number(row.index) || 0,
       errors: Number(row.errors) || 0,
       bank: Number(row.bank) || 0,
+      lesson: row.lesson == null || row.lesson === "" ? null : (Number(row.lesson) || 0),
       startedAt: row.startedAt == null || row.startedAt === "" ? null : Number(row.startedAt),
       result,
     };
@@ -349,6 +370,7 @@ export default function TulaanPage({ students = [], classes = [], typingCourse =
   const resumeRef = useRef(null);
   const livePublishRef = useRef(null);
   const liveErrorRef = useRef(false);
+  const roundRef = useRef(0);
   turnRef.current = turn;
   battleIdRef.current = battleId;
 
@@ -391,14 +413,20 @@ export default function TulaanPage({ students = [], classes = [], typingCourse =
   promptRef.current = duelPrompt;
 
   const pairReady = Boolean(leftId && rightId && leftId !== rightId && prompt);
-  const fighters = (lockedFighters || []).map((fighter, slot) => ({
-    ...fighter,
-    index: lanes[slot]?.index || 0,
-    errors: lanes[slot]?.errors || 0,
-    bank: lanes[slot]?.bank || 0,
-    startedAt: lanes[slot]?.startedAt || null,
-    result: lanes[slot]?.result || results[slot] || null,
-  }));
+  const fighters = (lockedFighters || []).map((fighter, slot) => {
+    const lesson = lessonIndexOf(lanes[slot], battle?.live);
+    return {
+      ...fighter,
+      index: lanes[slot]?.index || 0,
+      errors: lanes[slot]?.errors || 0,
+      bank: lanes[slot]?.bank || 0,
+      lesson,
+      prompt: promptOf(battle?.live, prompts, lesson) || duelPrompt,
+      task: taskLabel(battle?.live, prompts, lesson),
+      startedAt: lanes[slot]?.startedAt || null,
+      result: lanes[slot]?.result || results[slot] || null,
+    };
+  });
 
   useEffect(() => {
     if (phase !== "countdown") return undefined;
@@ -538,7 +566,9 @@ export default function TulaanPage({ students = [], classes = [], typingCourse =
       const next = mapBattle(data);
       if (!next) return;
       setBattle(next);
-      if (phase === "type" || phase === "result") {
+      const serverRound = Number(next.live?.countdownStartedAt) || 0;
+      const staleRound = roundRef.current > serverRound;
+      if (!staleRound && (phase === "type" || phase === "result")) {
         setLanes(lanesFromLive(next.live));
         if (phase === "type" && next.live?.phase === "result") setPhase("result");
       }
@@ -604,6 +634,7 @@ export default function TulaanPage({ students = [], classes = [], typingCourse =
     setTurn(0);
     setResults(emptyBoard());
     const started = Date.now();
+    roundRef.current = started;
     setLanes([blankRacer(), blankRacer()]);
     setCountdownStartedAt(started);
     setPhase("countdown");
@@ -638,9 +669,10 @@ export default function TulaanPage({ students = [], classes = [], typingCourse =
 
   function rematch() {
     resumeRef.current = null;
-    setTurn(0);
+    setTurn((value) => value + 1);
     setResults(emptyBoard());
     const started = Date.now();
+    roundRef.current = started;
     setLanes([blankRacer(), blankRacer()]);
     setCountdownStartedAt(started);
     setPhase("countdown");
@@ -663,7 +695,12 @@ export default function TulaanPage({ students = [], classes = [], typingCourse =
     const payload = {
       phase,
       countdownStartedAt,
+      lessons: prompts.map((row) => ({ id: row.id, title: row.title, prompt: row.prompt })),
     };
+    if (phase === "countdown") {
+      payload.lesson = 0;
+      payload.racers = [blankRacer(), blankRacer()];
+    }
     writeLiveBattle({
       battleId,
       ...payload,
@@ -684,7 +721,7 @@ export default function TulaanPage({ students = [], classes = [], typingCourse =
       });
     }, delay);
     return () => clearTimeout(timer);
-  }, [battleId, phase, turn, results, index, errors, startedAt, countdownStartedAt, lockedFighters]);
+  }, [battleId, phase, turn, results, index, errors, startedAt, countdownStartedAt, lockedFighters, prompts]);
 
   useEffect(() => () => {
     const latest = livePublishRef.current;
@@ -698,7 +735,7 @@ export default function TulaanPage({ students = [], classes = [], typingCourse =
         <div>
           <h2 className="cn-hand text-3xl" style={{ color: "#24478F" }}>Тулаан</h2>
           <p className="text-sm mt-1 max-w-2xl" style={{ color: "#64748B" }}>
-            Багш хоёр сурагч сонгоод хүсэлт илгээнэ. Тулаан арван хурууны 1-р дасгалаас эхэлнэ. Амь дуусахаас өмнө дасгал дуусвал дараагийнх руу орно. Амь нь түрүүлж дууссан нь ялагдана.
+            Багш хоёр сурагч сонгоод хүсэлт илгээнэ. Тулаан арван хурууны суурь мөрийн 1-р дасгалаас эхэлнэ. Дасгал дуусмагц өрсөлдөгчөө хүлээлгүй дараагийнх руу орно. Амь дуусвал тулаан дуусаж, ялагч тодорно.
           </p>
         </div>
         {phase !== "setup" ? (
@@ -738,7 +775,7 @@ export default function TulaanPage({ students = [], classes = [], typingCourse =
           win={laneWin(fighters)}
           count={count}
           prompt={duelPrompt}
-          taskLabel={taskLabel(battle?.live, prompts)}
+          taskLabel=""
           now={now}
           onRematch={rematch}
           onSetup={backToSetup}
@@ -774,6 +811,7 @@ function BattleStage({
           const shownErrors = fighter.result ? fighter.result.errors : fighter.errors || 0;
           const hp = fighter.result || typingNow ? battleHp(fighter, fighters[1 - slot]) : 100;
           const elapsed = fighter.startedAt ? Math.max(0, now - fighter.startedAt) : 0;
+          const lanePrompt = fighter.prompt || prompt;
           const dim = phase === "result" && win >= 0 && win !== slot;
           const focused = mineSlot == null || mineSlot === slot;
           return (
@@ -793,12 +831,13 @@ function BattleStage({
               <div className="mt-2 w-full" style={{ maxWidth: 280 }}>
                 <div className="text-xs font-semibold" style={{ color: fighter.hero.accent }}>{fighter.hero.title} · {fighter.hero.name}</div>
                 <div className="font-semibold truncate" style={{ color: "#0F172A" }}>{fighter.name}</div>
+                {fighter.task ? <div className="text-xs mt-0.5 font-semibold" style={{ color: "#24478F" }}>{fighter.task}</div> : null}
                 <div className="mt-2"><HpBar value={hp} accent={fighter.hero.accent} /></div>
                 <div className="mt-1 text-xs tabular-nums" style={{ color: "#64748B" }}>
                   {fighter.result
                     ? `${fighter.result.errors} алдаа · ${formatSeconds(fighter.result.ms)} · ${fighter.result.wpm} үг/мин`
                     : typingNow
-                      ? `${shownErrors} алдаа · ${fighter.startedAt ? formatSeconds(elapsed) : "0.0 сек"} · ${fighter.index || 0}/${prompt.length}`
+                      ? `${shownErrors} алдаа · ${fighter.startedAt ? formatSeconds(elapsed) : "0.0 сек"} · ${fighter.index || 0}/${lanePrompt.length}`
                       : focused ? "Бэлэн" : "Хүлээж байна"}
                 </div>
               </div>
@@ -825,13 +864,13 @@ function BattleStage({
       ) : null}
 
       {phase === "type" && mine ? (
-        <TypingLane fighter={mine} opponent={opponent} prompt={prompt} wrong={wrong} latin={latin} onForfeit={fighterCanForfeit(mine) ? onForfeit : null} />
+        <TypingLane fighter={mine} opponent={opponent} prompt={mine.prompt || prompt} wrong={wrong} latin={latin} onForfeit={fighterCanForfeit(mine) ? onForfeit : null} />
       ) : null}
 
       {phase === "type" && mineSlot == null ? (
         <div className="grid md:grid-cols-2 gap-3 mt-6">
           {fighters.map((fighter, slot) => (
-            <LaneWatch key={slot} fighter={fighter} prompt={prompt} />
+            <LaneWatch key={slot} fighter={fighter} prompt={fighter.prompt || prompt} />
           ))}
         </div>
       ) : null}
@@ -854,17 +893,19 @@ function fighterCanForfeit(fighter) {
 }
 
 function LaneWatch({ fighter, prompt }) {
+  const text = fighter.prompt || prompt;
   return (
     <div className="rounded-2xl px-4 py-4" style={{ background: "#FFFEFA", border: "1px solid #E6EAF2" }}>
       <div className="text-sm font-medium mb-2" style={{ color: fighter.hero.accent }}>
         {fighter.result
           ? `${fighter.name} дуусгасан`
-          : (fighter.index || 0) >= prompt.length && prompt.length > 0
-            ? `${fighter.name} дасгалаа дуусгасан`
+          : (fighter.index || 0) >= text.length && text.length > 0
+            ? `${fighter.name} дараагийн дасгал руу орж байна`
             : `${fighter.name} бичиж байна`}
       </div>
-      <PromptText prompt={prompt} index={fighter.result ? prompt.length : fighter.index || 0} wrong={false} done={Boolean(fighter.result)} />
-      <div className="mt-3 text-sm" style={{ color: "#64748B" }}>{fighter.index || 0}/{prompt.length} үсэг</div>
+      {fighter.task ? <div className="text-xs font-semibold mb-2" style={{ color: "#24478F" }}>{fighter.task}</div> : null}
+      <PromptText key={text} prompt={text} index={fighter.result ? text.length : fighter.index || 0} wrong={false} done={Boolean(fighter.result)} />
+      <div className="mt-3 text-sm" style={{ color: "#64748B" }}>{fighter.index || 0}/{text.length} үсэг</div>
     </div>
   );
 }
@@ -879,12 +920,13 @@ function TypingLane({ fighter, opponent, prompt, wrong, latin, onForfeit }) {
         {fighter.result
           ? "Тулаан дууслаа."
           : index >= prompt.length && prompt.length > 0
-            ? "Энэ дасгал дууслаа. Өрсөлдөгчөө хүлээж дараагийн дасгал руу орно."
-            : "Та бичиж байна. Өрсөлдөгч зэрэг бичиж байна."}
+            ? "Дасгал дууслаа. Дараагийн дасгал руу орж байна."
+            : "Та бичиж байна. Өрсөлдөгч зэрэг өөрийн дасгалаа бичиж байна."}
       </div>
+      {fighter.task ? <div className="text-sm font-semibold mb-3" style={{ color: "#24478F" }}>{fighter.task}</div> : null}
       {opponent ? (
         <p className="text-sm mb-3" style={{ color: "#64748B" }}>
-          {opponent.name}: {opponent.result ? "дуусгасан" : `${opponent.index || 0}/${prompt.length} үсэг · ${opponent.errors || 0} алдаа`}
+          {opponent.name}: {opponent.result ? "дуусгасан" : `${opponent.task ? `${opponent.task} · ` : ""}${opponent.index || 0}/${(opponent.prompt || prompt).length} үсэг · ${opponent.errors || 0} алдаа`}
         </p>
       ) : null}
       {latin ? (
@@ -947,7 +989,7 @@ function Setup({
             <span className="font-medium" style={{ color: "#0F172A" }}>Дасгал</span>
             <p className="mt-1 text-sm" style={{ color: "#334155" }}>
               {lessonCount
-                ? `1-р дасгалаас эхэлнэ${firstTitle ? ` · ${firstTitle}` : ""}. Нийт ${lessonCount} дасгал. Амь дуустал дараагийнх руу үргэлжилнэ.`
+                ? `Суурь мөрийн 1-р дасгалаас эхэлнэ${firstTitle ? ` · ${firstTitle}` : ""}. Нийт ${lessonCount} дасгал. Хэн дуусгасан нь өрсөлдөгчөө хүлээлгүй дараагийнх руу орно.`
                 : "Арван хурууны дасгал олдсонгүй."}
             </p>
           </div>
@@ -1072,28 +1114,32 @@ function readStudentPack(data) {
   };
 }
 
-function useStudentRace({ active, battleId, studentId, prompt, lesson = 0, seed, onSync, foeIndex = 0, foeErrors = 0, foeBank = 0 }) {
+function useStudentRace({ active, battleId, studentId, prompt, lessons = [], lesson = 0, round = 0, reset = false, seed, onSync, foeIndex = 0, foeErrors = 0, foeBank = 0 }) {
   const [index, setIndex] = useState(0);
   const [errors, setErrors] = useState(0);
   const [startedAt, setStartedAt] = useState(null);
   const [wrong, setWrong] = useState(false);
   const [latin, setLatin] = useState(false);
   const [result, setResult] = useState(null);
+  const [cursor, setCursor] = useState(lesson);
   const indexRef = useRef(0);
   const errorsRef = useRef(0);
   const startedRef = useRef(null);
   const doneRef = useRef(false);
-  const promptRef = useRef(prompt);
-  promptRef.current = prompt;
-  const lessonRef = useRef(lesson);
-  const appliedLesson = useRef(null);
-  if (appliedLesson.current !== null && appliedLesson.current !== lesson) {
-    indexRef.current = 0;
-    doneRef.current = false;
-  }
-  lessonRef.current = lesson;
+  const lessonsRef = useRef(lessons);
+  if (Array.isArray(lessons) && lessons.length) lessonsRef.current = lessons;
+  const cursorRef = useRef(lesson);
+  const ackedLesson = useRef(lesson);
+  if (lesson === cursorRef.current) ackedLesson.current = lesson;
+  const shownPrompt = lessonsRef.current[cursor]?.prompt || prompt;
+  const promptRef = useRef(shownPrompt);
+  promptRef.current = shownPrompt;
+  const lessonRef = useRef(cursor);
+  lessonRef.current = cursorRef.current;
   const seedRef = useRef(seed);
   seedRef.current = seed;
+  const serverLessonRef = useRef(lesson);
+  serverLessonRef.current = lesson;
   const foeIndexRef = useRef(foeIndex);
   const foeErrorsRef = useRef(foeErrors);
   const foeBankRef = useRef(foeBank);
@@ -1101,34 +1147,49 @@ function useStudentRace({ active, battleId, studentId, prompt, lesson = 0, seed,
   foeErrorsRef.current = foeErrors;
   foeBankRef.current = foeBank;
 
-  useLayoutEffect(() => {
-    if (!active) return;
-    if (appliedLesson.current === lesson) return;
-    const first = appliedLesson.current === null;
-    appliedLesson.current = lesson;
-    if (first) return;
+  function advanceDrill() {
+    const list = lessonsRef.current || [];
+    if (!list.length) return false;
+    const next = cursorRef.current + 1 >= list.length ? 0 : cursorRef.current + 1;
+    const nextPrompt = list[next]?.prompt || "";
+    if (!nextPrompt) return false;
+    cursorRef.current = next;
+    lessonRef.current = next;
+    promptRef.current = nextPrompt;
     indexRef.current = 0;
+    startedRef.current = null;
     doneRef.current = false;
+    setCursor(next);
     setIndex(0);
+    setStartedAt(null);
     setWrong(false);
     setResult(null);
-  }, [active, lesson]);
+    return true;
+  }
 
-  useEffect(() => {
-    if (!active) return undefined;
-    const start = seedRef.current || blankRacer();
+  const appliedRound = useRef(null);
+  useLayoutEffect(() => {
+    if (!round || appliedRound.current === round) return;
+    if (!active && !reset) return;
+    const restarted = appliedRound.current != null;
+    appliedRound.current = round;
+    const start = restarted || reset ? blankRacer() : (seedRef.current || blankRacer());
+    const nextLesson = start.lesson == null ? (Number(serverLessonRef.current) || 0) : (Number(start.lesson) || 0);
+    cursorRef.current = nextLesson;
+    lessonRef.current = nextLesson;
+    ackedLesson.current = nextLesson;
     indexRef.current = start.index || 0;
     errorsRef.current = start.errors || 0;
     startedRef.current = start.startedAt || null;
     doneRef.current = Boolean(start.result);
+    setCursor(nextLesson);
     setIndex(indexRef.current);
     setErrors(errorsRef.current);
     setStartedAt(startedRef.current);
     setResult(start.result || null);
     setWrong(false);
     setLatin(false);
-    return undefined;
-  }, [active, battleId]);
+  }, [round, active, reset]);
 
   const onSyncRef = useRef(onSync);
   onSyncRef.current = onSync;
@@ -1136,16 +1197,26 @@ function useStudentRace({ active, battleId, studentId, prompt, lesson = 0, seed,
   const push = useCallback((done, forfeit) => {
     if (!supabase || !battleId || !studentId) return;
     const ms = startedRef.current ? Math.max(1, Date.now() - startedRef.current) : 1;
+    let sendLesson = lessonRef.current;
+    let sendIndex = indexRef.current;
+    const acked = ackedLesson.current;
+    if (sendLesson !== acked) {
+      const donePrompt = lessonsRef.current[acked]?.prompt || "";
+      if (donePrompt) {
+        sendLesson = acked;
+        sendIndex = donePrompt.length;
+      }
+    }
     supabase.rpc("push_battle_progress", {
       p_student_id: studentId,
       p_battle_id: battleId,
-      p_index: indexRef.current,
+      p_index: sendIndex,
       p_errors: errorsRef.current,
       p_started_at: startedRef.current,
       p_ms: ms,
       p_done: Boolean(done),
       p_forfeit: Boolean(forfeit),
-      p_lesson: lessonRef.current,
+      p_lesson: sendLesson,
     }).then(({ data }) => {
       if (data?.battle) onSyncRef.current?.(data);
     });
@@ -1181,36 +1252,30 @@ function useStudentRace({ active, battleId, studentId, prompt, lesson = 0, seed,
       if (["Shift", "Control", "Alt", "Meta", "CapsLock", "Dead"].includes(key)) return;
       event.preventDefault();
       event.stopPropagation();
-      if (key.length !== 1) return;
       const expected = promptRef.current[indexRef.current];
-      setLatin(/^[a-zA-Z]$/.test(key));
       if (!startedRef.current) {
         startedRef.current = Date.now();
         setStartedAt(startedRef.current);
       }
-      if (promptRef.current.length > 0 && indexRef.current >= promptRef.current.length) return;
-      if (key === expected) {
+      if (promptRef.current.length > 0 && indexRef.current >= promptRef.current.length) {
+        advanceDrill();
+        return;
+      }
+      const matched = matchesPromptChar(event, expected);
+      setLatin(!matched && /^[a-zA-Z]$/.test(key));
+      if (matched) {
         const nextIndex = indexRef.current + 1;
         indexRef.current = nextIndex;
         setIndex(nextIndex);
         setWrong(false);
-      } else {
+        if (nextIndex >= promptRef.current.length && promptRef.current.length > 0) {
+          push(false, false);
+          advanceDrill();
+        }
+      } else if (key.length === 1) {
         errorsRef.current += 1;
         setErrors(errorsRef.current);
         setWrong(true);
-      }
-      const mineNow = {
-        index: indexRef.current,
-        errors: errorsRef.current,
-        bank: Number(seedRef.current?.bank) || 0,
-      };
-      const foeNow = {
-        index: foeIndexRef.current,
-        errors: foeErrorsRef.current,
-        bank: foeBankRef.current,
-      };
-      if (battleHp(mineNow, foeNow) <= 0 || battleHp(foeNow, mineNow) <= 0) {
-        doneRef.current = true;
       }
       push(false, false);
     }
@@ -1219,7 +1284,18 @@ function useStudentRace({ active, battleId, studentId, prompt, lesson = 0, seed,
   }, [active, result, finish]);
 
   const forfeit = useCallback(() => finish(true), [finish]);
-  return { index, errors, startedAt, wrong, latin, result, forfeit };
+  return {
+    index,
+    errors,
+    startedAt,
+    wrong,
+    latin,
+    result,
+    forfeit,
+    lesson: cursor,
+    prompt: shownPrompt,
+    lessons: lessonsRef.current,
+  };
 }
 
 function StudentMirror({ battle, studentId }) {
@@ -1230,12 +1306,19 @@ function StudentMirror({ battle, studentId }) {
   const mySlot = (battle.slots || []).findIndex((slot) => slot.studentId === studentId);
   const serverMine = mySlot >= 0 ? lanes[mySlot] : blankRacer();
   const serverFoe = mySlot >= 0 ? (lanes[1 - mySlot] || blankRacer()) : blankRacer();
+  const myLesson = lessonIndexOf(serverMine, live);
+  const foeLesson = lessonIndexOf(serverFoe, live);
+  const drillList = lessonList(live, null);
+  const myPrompt = promptOf(live, null, myLesson) || battle.prompt || "";
   const race = useStudentRace({
     active: phase === "type" && mySlot >= 0 && !serverMine.result,
     battleId: battle.id,
     studentId,
-    prompt: battle.prompt || "",
-    lesson: Number(live.lesson) || 0,
+    prompt: myPrompt,
+    lessons: drillList,
+    lesson: myLesson,
+    round: Number(live.countdownStartedAt) || 0,
+    reset: phase === "countdown",
     seed: serverMine,
     onSync: battle.onSync,
     foeIndex: serverFoe.index,
@@ -1254,14 +1337,19 @@ function StudentMirror({ battle, studentId }) {
     if (!row || !hero) return null;
     const lane = lanes[slot] || blankRacer();
     const mine = slot === mySlot;
+    const lesson = mine && phase === "type" ? race.lesson : (slot === 1 - mySlot ? foeLesson : lessonIndexOf(lane, live));
+    const drillLessons = race.lessons?.length ? race.lessons : live.lessons;
     return {
       name: row.studentName,
       hero,
       index: mine && phase === "type" ? race.index : lane.index,
       errors: mine && phase === "type" ? race.errors : lane.errors,
       bank: lane.bank || 0,
+      lesson,
+      prompt: (mine && phase === "type" ? race.prompt : promptOf(live, drillLessons, lesson)) || battle.prompt || "",
+      task: taskLabel(live, drillLessons, lesson),
       startedAt: mine && phase === "type" ? (race.startedAt || lane.startedAt) : lane.startedAt,
-      result: lane.result || (mine ? race.result : null),
+      result: phase === "countdown" ? null : (lane.result || (mine ? race.result : null)),
     };
   });
   const ready = fighters.every(Boolean);
@@ -1271,7 +1359,7 @@ function StudentMirror({ battle, studentId }) {
       <div className="mb-4">
         <h2 className="cn-hand text-3xl" style={{ color: "#24478F" }}>Тулаан</h2>
         <p className="text-sm mt-1 max-w-2xl" style={{ color: "#64748B" }}>
-          Хоёулаа зэрэг өөрийн дэлгэц дээр бичнэ. 1-р дасгалаас эхэлж, амь дуусахаас өмнө дуусвал дараагийн дасгал руу орно. Амь нь түрүүлж дууссан нь ялагдана.
+          Хоёулаа зэрэг өөрийн дэлгэц дээр бичнэ. Суурь мөрийн 1-р дасгалаас эхэлж, дуусмагц өрсөлдөгчөө хүлээлгүй дараагийн дасгал руу орно. Амь дуусвал тулаан дуусаж, ялагч тодорно.
         </p>
       </div>
       {phase === "lobby" || !ready ? <Lobby battle={battle} /> : (
@@ -1280,8 +1368,8 @@ function StudentMirror({ battle, studentId }) {
           phase={phase}
           win={laneWin(fighters)}
           count={countdownNumber(live.countdownStartedAt, now)}
-          prompt={battle.prompt || ""}
-          taskLabel={taskLabel(live, live.lessons)}
+          prompt={race.prompt || myPrompt}
+          taskLabel=""
           now={now}
           mineSlot={mySlot >= 0 ? mySlot : null}
           wrong={race.wrong}
